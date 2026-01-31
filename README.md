@@ -23,11 +23,11 @@ skillforge "Build a CUDA kernel for diffusers. Verify with: ./scripts/verify.sh 
 
 Claude Code follows this contract:
 
-1. **Implement** the task
-2. **Verify** with `./scripts/verify.sh -- <cmd>`
-3. **On failure**: `tail -n 200 .skillforge/last_run.log` → `/search-docs`
-4. **If insufficient**: `/deep-dive <docs-url>` to crawl full documentation
-5. **Apply fixes**, rerun verify.sh
+1. **Determine verify command** and write to `.skillforge/verify_command.txt`
+2. **Implement** the task
+3. **Verify** with `./scripts/verify.sh -- bash -lc "$(cat .skillforge/verify_command.txt)"`
+4. **On failure**: `tail -n 200 .skillforge/last_run.log` → `/search-docs` → optionally `/deep-dive`
+5. **Retry** until passing
 6. **On success**: `/save-skill <name>` to persist the workflow
 
 ## Core skills
@@ -89,6 +89,7 @@ The bootstrapped `scripts/verify.sh` wraps any command:
 
 .skillforge/
 ├── TASK.md
+├── verify_command.txt
 ├── last_run.log
 ├── registry.json
 ├── cache/<timestamp>_search.md

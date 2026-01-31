@@ -50,7 +50,7 @@ Required:
 
 **Claude Code as Coder**: No in-process model loop. The CLI only prepares the repo and launches the interactive `claude` session.
 
-**Verify Script**: `scripts/verify.sh` wraps any test/build command, streams output to terminal AND logs to `.skillforge/last_run.log`. Preserves exit codes via `PIPESTATUS[0]`.
+**Verify Script**: `scripts/verify.sh` wraps any test/build command, streams output to terminal AND logs to `.skillforge/last_run.log`. Preserves exit codes via `PIPESTATUS[0]`. Claude writes its chosen verify command to `.skillforge/verify_command.txt` at the start of each task.
 
 **Skill Storage**:
 - All skills (core and generated) live in `.claude/skills/<skill-name>/SKILL.md`

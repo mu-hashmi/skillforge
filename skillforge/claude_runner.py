@@ -102,13 +102,12 @@ _TASK_CONTRACT = """# Task
 {task}
 
 # Loop contract
-1) Implement the task.
-2) After each meaningful change, verify with ./scripts/verify.sh -- <cmd> [args...]
-3) On failure: run `tail -n 200 .skillforge/last_run.log` then invoke /search-docs with that output.
-4) If search results are insufficient, use /deep-dive <docs-url> to crawl documentation.
-5) Apply fixes and rerun ./scripts/verify.sh -- <cmd>
-6) Repeat until passing.
-7) On success: run /save-skill <short-skill-name>.
+1) First, determine the verify command (build + tests) for this task. Write it to .skillforge/verify_command.txt
+2) Implement the task.
+3) After each meaningful change, run: ./scripts/verify.sh -- bash -lc "$(cat .skillforge/verify_command.txt)"
+4) On failure: run `tail -n 200 .skillforge/last_run.log`, invoke /search-docs with that output, optionally /deep-dive <docs-url>, then retry.
+5) Repeat until passing.
+6) On success: run /save-skill <short-skill-name>.
 """
 
 
@@ -116,12 +115,11 @@ def build_appended_system_prompt() -> str:
     """Return the system prompt appended to Claude Code."""
     return (
         "Read .skillforge/TASK.md first. "
-        "Implement immediately with current knowledge. "
-        "After each meaningful change, verify with ./scripts/verify.sh -- <cmd> [args...]. "
-        "On failure, run `tail -n 200 .skillforge/last_run.log` and invoke /search-docs with the error output. "
-        "If results are insufficient, use /deep-dive <docs-url>. "
-        "Apply fixes and rerun verify.sh until passing. "
-        "When done, invoke /save-skill <short-skill-name>."
+        "First, determine the verify command (build + tests) and write it to .skillforge/verify_command.txt. "
+        "Implement with current knowledge. "
+        "After each meaningful change, run: ./scripts/verify.sh -- bash -lc \"$(cat .skillforge/verify_command.txt)\". "
+        "On failure, tail the log and invoke /search-docs, optionally /deep-dive <docs-url>, then retry. "
+        "On success, invoke /save-skill <short-skill-name>."
     )
 
 
