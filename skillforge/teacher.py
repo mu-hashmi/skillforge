@@ -1,6 +1,7 @@
 """Teacher model session with retry loop."""
 
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from .config import get_anthropic_api_key
 from .corpus import load_corpus_as_context, add_pages_to_corpus
 from .discovery import search_for_gap
 from .exceptions import TeacherSessionError, GapDetectionError, SearchError
+from .shadow_validation import shadow_validate_output, ShadowValidationResult, SandboxResult
 
 
 TEACHER_SYSTEM_PROMPT = """You are an expert technical teacher. Your task is to demonstrate how to complete a specific task using the documentation provided.
@@ -73,6 +75,7 @@ class AttemptOutcome:
     output: str
     gap_query: str | None = None
     error_message: str | None = None
+    shadow_validation: ShadowValidationResult | None = None
 
 
 @dataclass
@@ -122,10 +125,27 @@ def _check_task_complete(output: str) -> bool:
     return "TASK_COMPLETE:" in output
 
 
-def analyze_attempt(output: str) -> AttemptOutcome:
+def analyze_attempt(
+    output: str,
+    task: str,
+    sandbox_runner: Callable[[str, str], SandboxResult] | None = None,
+) -> AttemptOutcome:
     """Analyze model output to determine success/failure and any knowledge gaps."""
     if _check_task_complete(output):
-        return AttemptOutcome(success=True, output=output)
+        shadow_result = shadow_validate_output(
+            output=output,
+            task=task,
+            sandbox_runner=sandbox_runner,
+        )
+        if shadow_result.passed:
+            return AttemptOutcome(success=True, output=output, shadow_validation=shadow_result)
+        return AttemptOutcome(
+            success=False,
+            output=output,
+            gap_query=shadow_result.search_query,
+            error_message=shadow_result.error_summary,
+            shadow_validation=shadow_result,
+        )
 
     gap = _extract_gap_query(output)
     if gap:
@@ -145,7 +165,8 @@ def run_teacher_session(
     model: str = "claude-sonnet-4-20250514",
     max_attempts: int = 5,
     verbose: bool = False,
-    on_attempt: callable = None,
+    on_attempt: Callable[[int, AttemptOutcome], None] | None = None,
+    sandbox_runner: Callable[[str, str], SandboxResult] | None = None,
 ) -> TeacherResult:
     """
     Run teacher session with automatic gap filling.
@@ -194,7 +215,7 @@ def run_teacher_session(
         }
 
         # Analyze
-        outcome = analyze_attempt(output)
+        outcome = analyze_attempt(output, task=task, sandbox_runner=sandbox_runner)
 
         if on_attempt:
             on_attempt(attempt, outcome)
@@ -208,6 +229,15 @@ def run_teacher_session(
                 attempts=attempt,
                 gaps_filled=gaps_filled,
             )
+
+        if outcome.shadow_validation:
+            trace_entry["shadow_validation"] = {
+                "passed": outcome.shadow_validation.passed,
+                "errors": outcome.shadow_validation.errors,
+                "warnings": outcome.shadow_validation.warnings,
+                "error_summary": outcome.shadow_validation.error_summary,
+                "search_query": outcome.shadow_validation.search_query,
+            }
 
         if outcome.gap_query:
             trace_entry["gap_query"] = outcome.gap_query
