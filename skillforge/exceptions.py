@@ -41,6 +41,10 @@ class AnalysisError(SkillForgeError):
     """Could not determine if attempt succeeded or failed."""
 
 
+class ValidationError(SkillForgeError):
+    """Validation of teacher output failed."""
+
+
 class GenerationError(SkillForgeError):
     """Failed to generate skill file."""
 

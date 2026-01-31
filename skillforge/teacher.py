@@ -39,6 +39,29 @@ TASK_COMPLETE: <brief summary of what was accomplished>
 Remember: You MUST either identify a specific knowledge gap OR complete the task successfully. Do not provide partial solutions without indicating what's missing."""
 
 
+RETRY_SYSTEM_PROMPT = """You are an expert technical teacher. Your previous response was missing the required markers.
+
+TASK: {task}
+
+<documentation>
+{corpus_context}
+</documentation>
+
+---
+
+CRITICAL: Your response MUST end with EXACTLY ONE of these two markers:
+
+1. If you CAN complete the task with the documentation provided:
+   TASK_COMPLETE: <brief summary>
+
+2. If you CANNOT complete the task due to missing information:
+   KNOWLEDGE_GAP: <specific search query>
+
+There is NO other valid response format. You must choose one of these two options.
+
+Previous attempt did not include either marker. Please try again."""
+
+
 @dataclass
 class AttemptOutcome:
     success: bool
@@ -127,19 +150,24 @@ def run_teacher_session(
     2. Ask model to complete task
     3. Analyze response for success/failure
     4. If failed with identifiable gap: search, enrich corpus, retry
-    5. If failed without identifiable gap: raise GapDetectionError immediately
+    5. If failed without identifiable gap: retry ONCE with stricter prompt, then raise GapDetectionError
     """
     client = Anthropic(api_key=get_anthropic_api_key())
 
     trace: list[dict] = []
     gaps_filled: list[str] = []
+    used_retry_prompt = False  # Track if we've used the stricter retry prompt
 
     for attempt in range(1, max_attempts + 1):
         # Load current corpus
         corpus_context = load_corpus_as_context(corpus_path)
 
-        # Build system prompt
-        system = TEACHER_SYSTEM_PROMPT.format(task=task, corpus_context=corpus_context)
+        # Build system prompt - use stricter version if retrying after missing marker
+        if used_retry_prompt:
+            system = RETRY_SYSTEM_PROMPT.format(task=task, corpus_context=corpus_context)
+            used_retry_prompt = False  # Reset for next potential use
+        else:
+            system = TEACHER_SYSTEM_PROMPT.format(task=task, corpus_context=corpus_context)
 
         # Ask model
         messages = [{"role": "user", "content": f"Please complete this task: {task}"}]
@@ -194,8 +222,17 @@ def run_teacher_session(
 
             trace.append(trace_entry)
         else:
-            # No gap identified - raise immediately per PRD
+            # No gap identified - retry once with stricter prompt before failing
+            trace_entry["missing_marker"] = True
             trace.append(trace_entry)
+
+            if attempt < max_attempts and not used_retry_prompt:
+                # Mark that next attempt should use the retry prompt
+                used_retry_prompt = True
+                print(f"Warning: Attempt {attempt} missing markers, retrying with stricter prompt", file=sys.stderr)
+                continue
+
+            # Already retried or at max attempts - raise error
             raise GapDetectionError(
                 f"Task failed on attempt {attempt} without identifiable knowledge gap. "
                 f"Model output did not contain TASK_COMPLETE or KNOWLEDGE_GAP markers. "

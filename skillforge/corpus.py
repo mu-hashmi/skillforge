@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .discovery import Source, SourceType
+from .discovery import Source, SourceType, SourceTier
 from .firecrawl_client import crawl_url
 from .exceptions import CorpusBuildError, CorpusLoadError, CorpusUpdateError, FirecrawlCrawlError
 
@@ -20,6 +20,7 @@ class PageInfo:
     title: str | None
     source_type: str
     priority: int
+    tier: int  # 1, 2, or 3
     token_estimate: int
 
 
@@ -52,6 +53,7 @@ def _write_page(
     index: int,
     source_type: str,
     priority: int,
+    tier: int = 2,
 ) -> PageInfo:
     """Write a single page to the corpus with frontmatter."""
     filename = _url_to_filename(url, index)
@@ -63,6 +65,7 @@ title: {title or 'Untitled'}
 crawled_at: {datetime.now(timezone.utc).isoformat()}
 source_type: {source_type}
 priority: {priority}
+tier: {tier}
 ---
 
 """
@@ -75,6 +78,7 @@ priority: {priority}
         title=title,
         source_type=source_type,
         priority=priority,
+        tier=tier,
         token_estimate=_estimate_tokens(markdown),
     )
 
@@ -129,6 +133,8 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
 
         # Build include_paths from the mapped URLs for this domain
         include_paths = []
+        # Get the best tier from this domain's sources (lowest tier number = highest priority)
+        domain_tier = min(src.tier.value for src in domain_srcs)
         for src in domain_srcs:
             parsed = urlparse(src.url)
             if parsed.path and parsed.path != "/":
@@ -157,7 +163,8 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
                     markdown=page.markdown,
                     index=page_index,
                     source_type="crawled",
-                    priority=2,
+                    priority=domain_tier + 1,  # Priority based on domain tier
+                    tier=domain_tier,
                 )
                 pages_info.append(info)
                 page_index += 1
@@ -186,6 +193,7 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
                 index=page_index,
                 source_type=source.source_type.value,
                 priority=source.priority,
+                tier=source.tier.value,
             )
             pages_info.append(info)
             page_index += 1
@@ -195,6 +203,9 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
 
     # Write manifest
     total_tokens = sum(p.token_estimate for p in pages_info)
+    tier_counts = {1: 0, 2: 0, 3: 0}
+    for p in pages_info:
+        tier_counts[p.tier] = tier_counts.get(p.tier, 0) + 1
     manifest = {
         "task": task,
         "seed_url": seed_url,
@@ -207,12 +218,18 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
                 "title": p.title,
                 "source_type": p.source_type,
                 "priority": p.priority,
+                "tier": p.tier,
                 "token_estimate": p.token_estimate,
             }
             for p in pages_info
         ],
         "total_pages": len(pages_info),
         "total_tokens_estimate": total_tokens,
+        "tier_breakdown": {
+            "tier_1_critical": tier_counts[1],
+            "tier_2_supporting": tier_counts[2],
+            "tier_3_context": tier_counts[3],
+        },
     }
     (corpus_path / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
@@ -287,6 +304,7 @@ def add_pages_to_corpus(corpus_path: Path, sources: list[Source]) -> int:
             index=page_index,
             source_type=source.source_type.value,
             priority=source.priority,
+            tier=source.tier.value,
         )
         manifest["pages"].append({
             "filename": info.filename,
@@ -294,6 +312,7 @@ def add_pages_to_corpus(corpus_path: Path, sources: list[Source]) -> int:
             "title": info.title,
             "source_type": info.source_type,
             "priority": info.priority,
+            "tier": info.tier,
             "token_estimate": info.token_estimate,
         })
         page_index += 1
@@ -304,6 +323,16 @@ def add_pages_to_corpus(corpus_path: Path, sources: list[Source]) -> int:
         manifest["total_tokens_estimate"] = sum(
             p["token_estimate"] for p in manifest["pages"]
         )
+        # Update tier breakdown
+        tier_counts = {1: 0, 2: 0, 3: 0}
+        for p in manifest["pages"]:
+            tier = p.get("tier", 2)  # Default to tier 2 for backwards compat
+            tier_counts[tier] = tier_counts.get(tier, 0) + 1
+        manifest["tier_breakdown"] = {
+            "tier_1_critical": tier_counts[1],
+            "tier_2_supporting": tier_counts[2],
+            "tier_3_context": tier_counts[3],
+        }
         manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
