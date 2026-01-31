@@ -10,6 +10,7 @@ load_dotenv()
 
 from .config import validate_config
 from .discovery import discover_sources, discover_sources_from_task
+from .sandbox_runner import run_sandbox_validation
 from .corpus import build_corpus
 from .teacher import run_teacher_session
 from .validation import validate_or_raise
@@ -46,6 +47,16 @@ def _print_error(message: str) -> None:
 @click.option("--max-attempts", default=5, help="Maximum teacher session attempts")
 @click.option("--corpus-limit", default=50, help="Maximum pages to crawl")
 @click.option("--stealth", is_flag=True, help="Use stealth proxies for anti-bot protected sites (9x cost)")
+@click.option(
+    "--fast",
+    is_flag=True,
+    help="Speed-optimized mode (smaller discovery/corpus limits for demos)",
+)
+@click.option(
+    "--no-sandbox",
+    is_flag=True,
+    help="Disable sandbox shadow validation for TASK_COMPLETE outputs",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def main(
     task: str,
@@ -54,6 +65,8 @@ def main(
     max_attempts: int,
     corpus_limit: int,
     stealth: bool,
+    fast: bool,
+    no_sandbox: bool,
     verbose: bool,
 ) -> None:
     """
@@ -72,12 +85,35 @@ def main(
         _print_success("Configuration valid")
 
         # Step 2: Discover sources
+        discovery_map_limit = 200
+        discovery_search_limit = 5
+        discovery_max_seeds = 3
+        effective_corpus_limit = corpus_limit
+
+        if fast:
+            discovery_map_limit = 50
+            discovery_search_limit = 3
+            discovery_max_seeds = 1
+            effective_corpus_limit = min(corpus_limit, 20)
+            if verbose:
+                console.print("    [yellow]Fast mode enabled: reduced discovery and corpus limits[/]")
+
         if seed:
             _print_step(2, 6, f"Discovering sources from seed: {seed}")
-            sources = discover_sources(task, seed)
+            sources = discover_sources(
+                task,
+                seed,
+                map_limit=discovery_map_limit,
+                search_limit=discovery_search_limit,
+            )
         else:
             _print_step(2, 6, "Auto-discovering documentation sources...")
-            sources = discover_sources_from_task(task)
+            sources = discover_sources_from_task(
+                task,
+                max_seeds=discovery_max_seeds,
+                search_limit=discovery_search_limit,
+                map_limit=discovery_map_limit,
+            )
         _print_success(f"Found {len(sources)} sources")
         if verbose:
             # Show tier breakdown
@@ -94,7 +130,7 @@ def main(
         _print_step(3, 6, "Building documentation corpus...")
         if stealth and verbose:
             console.print("    [yellow]Stealth mode enabled (9x crawl cost)[/]")
-        corpus_path = build_corpus(task, sources, limit=corpus_limit, stealth=stealth)
+        corpus_path = build_corpus(task, sources, limit=effective_corpus_limit, stealth=stealth)
         _print_success(f"Corpus created at {corpus_path.name}")
         if verbose:
             import json
@@ -123,6 +159,7 @@ def main(
             max_attempts=max_attempts,
             verbose=verbose,
             on_attempt=on_attempt if verbose else None,
+            sandbox_runner=None if no_sandbox else run_sandbox_validation,
             stealth=stealth,
         )
         _print_success(f"Completed in {result.attempts} attempt(s)")
