@@ -89,7 +89,7 @@ def _get_base_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
+def build_corpus(task: str, sources: list[Source], limit: int = 50, stealth: bool = False) -> Path:
     """
     Build a corpus from discovered sources.
 
@@ -98,6 +98,9 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
     3. Add any pre-fetched search results
     4. Save pages as markdown with frontmatter
     5. Create manifest.json
+
+    Args:
+        stealth: Use Firecrawl stealth proxies for sites with anti-bot protection.
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     corpus_name = f"corpus_{_slugify(task)}_{timestamp}"
@@ -151,6 +154,7 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
                 base_url,
                 limit=remaining_limit,
                 include_paths=include_paths,
+                stealth=stealth,
             )
             for page in crawl_result.pages:
                 if page.url in seen_urls:

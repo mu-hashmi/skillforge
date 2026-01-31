@@ -96,8 +96,14 @@ def crawl_url(
     limit: int = 50,
     include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
+    stealth: bool = False,
 ) -> CrawlResult:
-    """Crawl a URL and its subpages."""
+    """Crawl a URL and its subpages.
+
+    Args:
+        stealth: Use stealth proxies for sites with anti-bot protection.
+                 Note: costs ~9x more per request but bypasses many blockers.
+    """
     client = _get_client()
     try:
         kwargs = {"limit": limit}
@@ -105,6 +111,8 @@ def crawl_url(
             kwargs["include_paths"] = include_paths
         if exclude_paths:
             kwargs["exclude_paths"] = exclude_paths
+        if stealth:
+            kwargs["scrape_options"] = {"proxy": "stealth"}
 
         result = client.crawl(url, **kwargs)
 
@@ -163,13 +171,21 @@ def search(
     query: str,
     limit: int = 10,
     scrape: bool = True,
+    stealth: bool = False,
 ) -> SearchResult:
-    """Search the web for relevant content."""
+    """Search the web for relevant content.
+
+    Args:
+        stealth: Use stealth proxies for sites with anti-bot protection.
+    """
     client = _get_client()
     try:
         kwargs = {"limit": limit}
         if scrape:
-            kwargs["scrape_options"] = {"formats": ["markdown"]}
+            scrape_opts = {"formats": ["markdown"]}
+            if stealth:
+                scrape_opts["proxy"] = "stealth"
+            kwargs["scrape_options"] = scrape_opts
 
         result = client.search(query, **kwargs)
 

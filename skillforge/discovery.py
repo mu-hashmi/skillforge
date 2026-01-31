@@ -288,10 +288,10 @@ def discover_sources_from_task(task: str, max_seeds: int = 3) -> list[Source]:
     return sources
 
 
-def search_for_gap(gap_query: str) -> list[Source]:
+def search_for_gap(gap_query: str, stealth: bool = False) -> list[Source]:
     """Search for specific missing information to fill a knowledge gap."""
     try:
-        result = search(gap_query, limit=5, scrape=True)
+        result = search(gap_query, limit=5, scrape=True, stealth=stealth)
         sources = []
         for item in result.results:
             tier = _classify_tier(item.url)

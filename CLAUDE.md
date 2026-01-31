@@ -47,6 +47,7 @@ uv run skillforge "build CUDA kernels" --seed https://docs.nvidia.com/cuda -v
 --model          # Model to use (default: claude-sonnet-4-20250514)
 --max-attempts   # Max teacher retries (default: 5)
 --corpus-limit   # Max pages to crawl (default: 50)
+--stealth        # Use stealth proxies for anti-bot protected sites (9x crawl cost)
 ```
 
 ### Auto-Discovery Mode (no --seed)

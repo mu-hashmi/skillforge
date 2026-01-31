@@ -45,6 +45,7 @@ def _print_error(message: str) -> None:
 )
 @click.option("--max-attempts", default=5, help="Maximum teacher session attempts")
 @click.option("--corpus-limit", default=50, help="Maximum pages to crawl")
+@click.option("--stealth", is_flag=True, help="Use stealth proxies for anti-bot protected sites (9x cost)")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def main(
     task: str,
@@ -52,6 +53,7 @@ def main(
     model: str,
     max_attempts: int,
     corpus_limit: int,
+    stealth: bool,
     verbose: bool,
 ) -> None:
     """
@@ -90,7 +92,9 @@ def main(
 
         # Step 3: Build corpus
         _print_step(3, 6, "Building documentation corpus...")
-        corpus_path = build_corpus(task, sources, limit=corpus_limit)
+        if stealth and verbose:
+            console.print("    [yellow]Stealth mode enabled (9x crawl cost)[/]")
+        corpus_path = build_corpus(task, sources, limit=corpus_limit, stealth=stealth)
         _print_success(f"Corpus created at {corpus_path.name}")
         if verbose:
             import json
@@ -119,6 +123,7 @@ def main(
             max_attempts=max_attempts,
             verbose=verbose,
             on_attempt=on_attempt if verbose else None,
+            stealth=stealth,
         )
         _print_success(f"Completed in {result.attempts} attempt(s)")
         if result.gaps_filled:

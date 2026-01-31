@@ -167,6 +167,7 @@ def run_teacher_session(
     verbose: bool = False,
     on_attempt: Callable[[int, AttemptOutcome], None] | None = None,
     sandbox_runner: Callable[[str, str], SandboxResult] | None = None,
+    stealth: bool = False,
 ) -> TeacherResult:
     """
     Run teacher session with automatic gap filling.
@@ -177,6 +178,9 @@ def run_teacher_session(
     3. Analyze response for success/failure
     4. If failed with identifiable gap: search, enrich corpus, retry
     5. If failed without identifiable gap: retry ONCE with stricter prompt, then raise GapDetectionError
+
+    Args:
+        stealth: Use stealth proxies for gap-filling searches.
     """
     client = Anthropic(api_key=get_anthropic_api_key())
 
@@ -244,7 +248,7 @@ def run_teacher_session(
 
             # Search for missing knowledge
             try:
-                gap_sources = search_for_gap(outcome.gap_query)
+                gap_sources = search_for_gap(outcome.gap_query, stealth=stealth)
                 if gap_sources:
                     added = add_pages_to_corpus(corpus_path, gap_sources)
                     gaps_filled.append(outcome.gap_query)
