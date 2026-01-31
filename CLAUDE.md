@@ -36,17 +36,27 @@ When using Firecrawl, we must prioritize sources using **Domain Layering**:
 # Install dependencies
 uv sync
 
-# Run the CLI (small doc set is safer for a live demo)
-uv run skillforge "task description" --seed https://docs.example.com
+# Run WITHOUT seed URL (auto-discovers docs via Firecrawl search)
+uv run skillforge "use the Firecrawl API" -v
 
-# Run with verbose output (recommended in demos)
+# Run WITH explicit seed URL (safer for a live demo)
 uv run skillforge "build CUDA kernels" --seed https://docs.nvidia.com/cuda -v
 
 # Options
+--seed           # Seed documentation URL (optional - auto-discovers if omitted)
 --model          # Model to use (default: claude-sonnet-4-20250514)
 --max-attempts   # Max teacher retries (default: 5)
 --corpus-limit   # Max pages to crawl (default: 50)
 ```
+
+### Auto-Discovery Mode (no --seed)
+When `--seed` is omitted, Skillforge automatically:
+1. Searches Firecrawl for `"<task> official documentation"`, `"<task> documentation"`, etc.
+2. Filters results to docs-like URLs (prefers Tier 1 sources)
+3. Uses top 3 results as seeds for deeper crawling
+4. Merges and deduplicates all sources with proper tiering
+
+This enables the core use case: **Claude fails a task → Skillforge auto-discovers docs → generates a skill → future Claude sessions succeed.**
 
 ## Environment Variables (must be set)
 
@@ -61,7 +71,7 @@ Required:
 ### Core Flow (6 steps)
 
 1. **Config Validation** (`config.py`) - Checks API keys exist
-2. **Source Discovery** (`discovery.py`) - Maps seed URL, filters to docs paths, searches for supplementary content
+2. **Source Discovery** (`discovery.py`) - Auto-discovers docs via Firecrawl search OR maps explicit seed URL, filters to docs paths, classifies into tiers
 3. **Corpus Building** (`corpus.py`) - Crawls sources via Firecrawl, saves as markdown with YAML frontmatter
 4. **Teacher Session** (`teacher.py`) - Iterative loop where Claude attempts the task. On failure, extracts `KNOWLEDGE_GAP:` queries, searches for missing info, enriches corpus, retries
 5. **Validation** - After the teacher detects success, run a validation script inside the sandbox.
@@ -89,8 +99,8 @@ If neither marker is present, the system raises `GapDetectionError` immediately 
 
 | Module | Purpose |
 |--------|---------|
-| `cli.py` | Click command, orchestrates 5-step flow |
-| `discovery.py` | URL mapping, docs filtering, supplementary search |
+| `cli.py` | Click command, orchestrates 6-step flow |
+| `discovery.py` | Auto-discovery (no seed), URL mapping, docs filtering, tier classification |
 | `corpus.py` | Crawl → markdown conversion, manifest management |
 | `firecrawl_client.py` | Wraps Firecrawl map/crawl/search APIs |
 | `teacher.py` | Retry loop with gap detection and corpus enrichment |
