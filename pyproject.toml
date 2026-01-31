@@ -1,7 +1,7 @@
 [project]
 name = "skillforge"
 version = "0.1.0"
-description = "Add your description here"
+description = "Generate agent skills from documentation using Firecrawl"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,3 +10,12 @@ dependencies = [
     "firecrawl-py>=4.14.0",
     "rich>=14.3.1",
 ]
+
+[project.scripts]
+skillforge = "skillforge.cli:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+packages = ["skillforge"]
