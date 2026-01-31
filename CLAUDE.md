@@ -24,61 +24,44 @@ This is a hackathon project for **Hack the Stackathon** - a builder-focused hack
 uv sync
 
 # Run the CLI
-uv run skillforge "task description" --seed https://docs.example.com
-
-# Run with verbose output
-uv run skillforge "build CUDA kernels" --seed https://docs.nvidia.com/cuda -v
-
-# Options
---model          # Model to use (default: claude-sonnet-4-20250514)
---max-attempts   # Max teacher retries (default: 5)
---corpus-limit   # Max pages to crawl (default: 50)
+uv run skillforge "task description"
 ```
 
 ## Environment Variables
 
 Required:
-- `ANTHROPIC_API_KEY` - Claude API key
 - `FIRECRAWL_API_KEY` - Firecrawl API key
 
 ## Architecture
 
-**Skillforge** generates agent skills from documentation. It crawls docs, runs iterative Claude sessions to complete a task, fills knowledge gaps automatically, and outputs a SKILL.md file.
+**Skillforge** launches Claude Code as the coder, installs core skills in the target repo, and provides Firecrawl retrieval + a simple skill generator.
 
-### Core Flow (5 steps)
+### Core Flow
 
-1. **Config Validation** (`config.py`) - Checks API keys exist
-2. **Source Discovery** (`discovery.py`) - Maps seed URL, filters to docs paths, searches for supplementary content
-3. **Corpus Building** (`corpus.py`) - Crawls sources via Firecrawl, saves as markdown with YAML frontmatter
-4. **Teacher Session** (`teacher.py`) - Iterative loop where Claude attempts the task. Model responds via tool calls, analyzer checks completeness, and any gaps are searched to enrich corpus before retrying
-5. **Skill Generation** (`generator.py`) - Synthesizes successful trace into SKILL.md + tests.json
+1. **Core Skills Install** (`claude_runner.py`) - Writes `.claude/skills/skillforge-core/*/SKILL.md`
+2. **Task Contract** (`claude_runner.py`) - Writes `.skillforge/TASK.md`
+3. **Claude Code Launch** (`claude_runner.py`) - Runs `claude "<task>" --append-system-prompt "<rules>"`
+4. **Retrieval** (`firecrawl_search.py`) - `/search-docs` executes Firecrawl queries and caches results
+5. **Skill Generation** (`generate_skill.py`) - `/save-skill` generates `.claude/skills/<name>/SKILL.md` and updates `.skillforge/registry.json`
 
 ### Key Design Decisions
 
-**Teacher Protocol**: Model must call exactly one tool:
-- `task_complete` with a full solution and summary
-- `request_documentation` with a specific search query and reason
+**Claude Code as Coder**: No in-process model loop. The CLI only prepares the repo and launches the interactive `claude` session.
 
-If the analyzer cannot confirm completeness or identify a gap, the system raises `AnalysisError` rather than guessing.
+**Skill Storage**:
+- Core skills live in `.claude/skills/skillforge-core/`
+- Generated skills live in `.claude/skills/<skill-name>/SKILL.md`
 
-**Corpus Storage**:
-- `corpus/corpus_<task>_<timestamp>/` contains numbered markdown files
-- `manifest.json` tracks metadata and token estimates
-- Pages include source URL/title in YAML frontmatter
-
-**Output**:
-- `skills/<skill_name>/SKILL.md` - Main skill documentation
-- `skills/<skill_name>/tests.json` - Verification test cases
-- `skills/<skill_name>/skill_manifest.json` - Metadata
+**Retrieval Cache**:
+- `.skillforge/cache/<timestamp>_search.md` stores Firecrawl results.
 
 ### Module Responsibilities
 
 | Module | Purpose |
 |--------|---------|
-| `cli.py` | Click command, orchestrates 5-step flow |
-| `discovery.py` | URL mapping, docs filtering, supplementary search |
-| `corpus.py` | Crawl → markdown conversion, manifest management |
+| `cli.py` | Click command, prepares repo and launches Claude Code |
+| `claude_runner.py` | Core skills + task contract + launcher |
 | `firecrawl_client.py` | Wraps Firecrawl map/crawl/search APIs |
-| `teacher.py` | Retry loop with gap detection and corpus enrichment |
-| `generator.py` | SKILL.md synthesis from successful trace |
+| `firecrawl_search.py` | CLI for Firecrawl queries and cache writes |
+| `generate_skill.py` | Creates skill directory from task + trace |
 | `exceptions.py` | Typed exception hierarchy (all inherit `SkillForgeError`) |

@@ -10,19 +10,16 @@ from .exceptions import (
     CorpusBuildError,
     CorpusLoadError,
     CorpusUpdateError,
-    TeacherSessionError,
-    GapDetectionError,
-    AnalysisError,
     GenerationError,
     FirecrawlError,
     FirecrawlMapError,
     FirecrawlCrawlError,
     FirecrawlSearchError,
+    ClaudeRunnerError,
 )
 from .discovery import Source, SourceType, discover_sources, search_for_gap
 from .corpus import build_corpus, load_corpus_as_context, add_pages_to_corpus
-from .teacher import TeacherResult, AttemptOutcome, run_teacher_session, analyze_attempt
-from .generator import generate_skill
+from .claude_runner import ensure_core_skills, write_task_file, launch_claude, build_appended_system_prompt
 
 __all__ = [
     "__version__",
@@ -34,14 +31,12 @@ __all__ = [
     "CorpusBuildError",
     "CorpusLoadError",
     "CorpusUpdateError",
-    "TeacherSessionError",
-    "GapDetectionError",
-    "AnalysisError",
     "GenerationError",
     "FirecrawlError",
     "FirecrawlMapError",
     "FirecrawlCrawlError",
     "FirecrawlSearchError",
+    "ClaudeRunnerError",
     # Discovery
     "Source",
     "SourceType",
@@ -51,11 +46,9 @@ __all__ = [
     "build_corpus",
     "load_corpus_as_context",
     "add_pages_to_corpus",
-    # Teacher
-    "TeacherResult",
-    "AttemptOutcome",
-    "run_teacher_session",
-    "analyze_attempt",
-    # Generator
-    "generate_skill",
+    # Claude runner
+    "ensure_core_skills",
+    "write_task_file",
+    "launch_claude",
+    "build_appended_system_prompt",
 ]

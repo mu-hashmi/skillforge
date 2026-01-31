@@ -59,3 +59,7 @@ class FirecrawlCrawlError(FirecrawlError):
 
 class FirecrawlSearchError(FirecrawlError):
     """Search operation failed."""
+
+
+class ClaudeRunnerError(SkillForgeError):
+    """Claude Code launcher or setup failed."""

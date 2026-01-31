@@ -13,15 +13,6 @@ def get_firecrawl_api_key() -> str:
     return key
 
 
-def get_anthropic_api_key() -> str:
-    """Get Anthropic API key from environment."""
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        raise ConfigError("ANTHROPIC_API_KEY environment variable not set")
-    return key
-
-
 def validate_config() -> None:
-    """Validate all required configuration is present."""
+    """Validate required configuration is present."""
     get_firecrawl_api_key()
-    get_anthropic_api_key()
