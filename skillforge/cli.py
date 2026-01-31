@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from .claude_runner import ensure_core_skills, write_task_file, launch_claude
+from .claude_runner import ensure_core_skills, ensure_verify_script, write_task_file, launch_claude
 from .exceptions import SkillForgeError, ClaudeRunnerError
 
 
@@ -15,6 +15,7 @@ def main(task: str) -> None:
     try:
         repo_root = Path.cwd()
         ensure_core_skills(repo_root)
+        ensure_verify_script(repo_root)
         write_task_file(repo_root, task)
         exit_code = launch_claude(task, repo_root)
         raise SystemExit(exit_code)

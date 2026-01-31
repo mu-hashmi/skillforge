@@ -78,29 +78,49 @@ Use --limit N to crawl more or fewer pages:
 """
 
 
+_VERIFY_SCRIPT = """#!/usr/bin/env bash
+set -euo pipefail
+
+LOGFILE=".skillforge/last_run.log"
+
+if [[ $# -lt 2 || "$1" != "--" ]]; then
+    echo "Usage: ./scripts/verify.sh -- <command> [args...]"
+    exit 1
+fi
+shift
+
+mkdir -p "$(dirname "$LOGFILE")"
+
+echo "Running: $*" | tee "$LOGFILE"
+echo "---" | tee -a "$LOGFILE"
+"$@" 2>&1 | tee -a "$LOGFILE"
+exit "${PIPESTATUS[0]}"
+"""
+
+
 _TASK_CONTRACT = """# Task
 {task}
 
 # Loop contract
-1) Attempt implementation immediately (do not stall on docs).
-2) Run required tests/build/bench commands.
-3) On failure: use /search-docs with the exact stderr/error text, apply fixes, and rerun.
-4) If search results are insufficient or you need deep understanding of a library, use /deep-dive <docs-url> to crawl entire documentation.
-5) Repeat until passing.
-6) On success: run /save-skill <short-skill-name>.
+1) Implement the task.
+2) After each meaningful change, verify with ./scripts/verify.sh -- <cmd> [args...]
+3) On failure: run `tail -n 200 .skillforge/last_run.log` then invoke /search-docs with that output.
+4) If search results are insufficient, use /deep-dive <docs-url> to crawl documentation.
+5) Apply fixes and rerun ./scripts/verify.sh -- <cmd>
+6) Repeat until passing.
+7) On success: run /save-skill <short-skill-name>.
 """
 
 
 def build_appended_system_prompt() -> str:
     """Return the system prompt appended to Claude Code."""
     return (
-        "Read .skillforge/TASK.md first and follow it. "
-        "Implement immediately with current knowledge (no docs-first stalling). "
-        "Run the required tests/build/bench. "
-        "If anything fails, invoke /search-docs with the exact stderr/error text, "
-        "apply fixes, and rerun until passing. "
-        "If search results are insufficient or you need comprehensive docs for a library, "
-        "use /deep-dive <docs-url> to crawl the entire documentation site. "
+        "Read .skillforge/TASK.md first. "
+        "Implement immediately with current knowledge. "
+        "After each meaningful change, verify with ./scripts/verify.sh -- <cmd> [args...]. "
+        "On failure, run `tail -n 200 .skillforge/last_run.log` and invoke /search-docs with the error output. "
+        "If results are insufficient, use /deep-dive <docs-url>. "
+        "Apply fixes and rerun verify.sh until passing. "
         "When done, invoke /save-skill <short-skill-name>."
     )
 
@@ -119,6 +139,16 @@ def ensure_core_skills(repo_root: Path) -> None:
         skill_path = skills_root / skill_name / "SKILL.md"
         skill_path.parent.mkdir(parents=True, exist_ok=True)
         skill_path.write_text(content, encoding="utf-8")
+
+
+def ensure_verify_script(repo_root: Path) -> None:
+    """Install scripts/verify.sh in the target repo."""
+    script_path = repo_root / "scripts" / "verify.sh"
+    if script_path.exists():
+        return
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(_VERIFY_SCRIPT, encoding="utf-8")
+    script_path.chmod(0o755)
 
 
 def write_task_file(repo_root: Path, task: str) -> Path:
