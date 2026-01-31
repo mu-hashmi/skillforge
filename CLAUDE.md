@@ -38,7 +38,7 @@ Required:
 
 ### Core Flow
 
-1. **Core Skills Install** (`claude_runner.py`) - Writes `.claude/skills/skillforge-core/*/SKILL.md`
+1. **Core Skills Install** (`claude_runner.py`) - Writes `.claude/skills/{search-docs,save-skill}/SKILL.md`
 2. **Task Contract** (`claude_runner.py`) - Writes `.skillforge/TASK.md`
 3. **Claude Code Launch** (`claude_runner.py`) - Runs `claude "<task>" --append-system-prompt "<rules>"`
 4. **Retrieval** (`firecrawl_search.py`) - `/search-docs` executes Firecrawl queries and caches results
@@ -49,8 +49,7 @@ Required:
 **Claude Code as Coder**: No in-process model loop. The CLI only prepares the repo and launches the interactive `claude` session.
 
 **Skill Storage**:
-- Core skills live in `.claude/skills/skillforge-core/`
-- Generated skills live in `.claude/skills/<skill-name>/SKILL.md`
+- All skills (core and generated) live in `.claude/skills/<skill-name>/SKILL.md`
 
 **Retrieval Cache**:
 - `.skillforge/cache/<timestamp>_search.md` stores Firecrawl results.

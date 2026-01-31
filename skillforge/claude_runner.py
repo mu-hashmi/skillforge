@@ -14,7 +14,7 @@ _SEARCH_DOCS_SKILL = """---
 name: search-docs
 description: Firecrawl-powered docs search. Use when build failed, test failure, compiler error, CUDA error, import error, linker error, segfault, runtime error, stack trace, or any error output needs targeted documentation lookup.
 allowed-tools:
-  - Bash: 'python -m skillforge.firecrawl_search "$ARGUMENTS"'
+  - Bash
 ---
 
 # /search-docs
@@ -34,9 +34,8 @@ The command writes full results to .skillforge/cache/<timestamp>_search.md and p
 _SAVE_SKILL_SKILL = """---
 name: save-skill
 description: Persist the current debugging/coding workflow as a reusable Agent Skill under .claude/skills/<name>/SKILL.md
-disable-model-invocation: true
 allowed-tools:
-  - Bash: 'python -m skillforge.generate_skill --name "$ARGUMENTS" --task-file .skillforge/TASK.md --out ".claude/skills/$ARGUMENTS"'
+  - Bash
 ---
 
 # /save-skill
@@ -77,7 +76,7 @@ def build_appended_system_prompt() -> str:
 
 def ensure_core_skills(repo_root: Path) -> None:
     """Install or update the core SkillForge skills in the target repo."""
-    skills_root = repo_root / ".claude" / "skills" / "skillforge-core"
+    skills_root = repo_root / ".claude" / "skills"
     search_docs_path = skills_root / "search-docs" / "SKILL.md"
     save_skill_path = skills_root / "save-skill" / "SKILL.md"
 
