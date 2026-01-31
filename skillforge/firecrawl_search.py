@@ -58,18 +58,20 @@ def _print_summary(cache_path: Path, query: str, results) -> None:
     print(f"Search query: {query}")
 
 
-def run(query: str, limit: int = 10, retries: int = 3) -> Path:
+def run(query: str, limit: int = 10, retries: int = 3, github: bool = False) -> Path:
     if not query:
         raise ValueError("Empty query. Provide error text or a search query.")
 
     # Validate Firecrawl credentials early.
     get_firecrawl_api_key()
 
+    categories = ["github"] if github else None
+
     last_error: Exception | None = None
     result = None
     for attempt in range(1, retries + 1):
         try:
-            result = search(query, limit=limit, scrape=True)
+            result = search(query, limit=limit, scrape=True, categories=categories)
             break
         except Exception as e:  # noqa: BLE001 - surface clear failure below
             last_error = e
@@ -97,11 +99,12 @@ def main() -> None:
     parser.add_argument("query", nargs="*", help="Search query or pasted stderr")
     parser.add_argument("--limit", type=int, default=10, help="Number of results to fetch")
     parser.add_argument("--retries", type=int, default=3, help="Retry attempts on failure")
+    parser.add_argument("--github", action="store_true", help="Search GitHub issues/discussions only")
     args = parser.parse_args()
 
     query = _read_query(args.query)
     try:
-        run(query, limit=args.limit, retries=args.retries)
+        run(query, limit=args.limit, retries=args.retries, github=args.github)
     except (ValueError, FirecrawlSearchError) as e:
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)

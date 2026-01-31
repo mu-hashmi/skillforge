@@ -163,13 +163,23 @@ def search(
     query: str,
     limit: int = 10,
     scrape: bool = True,
+    categories: list[str] | None = None,
 ) -> SearchResult:
-    """Search the web for relevant content."""
+    """Search the web for relevant content.
+
+    Args:
+        query: Search query string
+        limit: Maximum number of results
+        scrape: Whether to scrape full markdown content
+        categories: Optional list of categories to filter (e.g., ["github"])
+    """
     client = _get_client()
     try:
         kwargs = {"limit": limit}
         if scrape:
             kwargs["scrape_options"] = {"formats": ["markdown"]}
+        if categories:
+            kwargs["search_options"] = {"categories": categories}
 
         result = client.search(query, **kwargs)
 

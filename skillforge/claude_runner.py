@@ -50,6 +50,34 @@ Keep SKILL.md under ~500 lines; put large references into separate files.
 """
 
 
+_DEEP_DIVE_SKILL = """---
+name: deep-dive
+description: Crawl an entire documentation site when you need comprehensive knowledge about a library/tool. Use when search results are insufficient or you're working extensively with one technology.
+allowed-tools:
+  - Bash
+---
+
+# /deep-dive
+
+Use when you need thorough understanding of a library, not just error fixes.
+
+Run:
+!python -m skillforge.firecrawl_crawl "$ARGUMENTS"
+
+Arguments: A documentation URL (e.g., https://docs.fastht.ml)
+
+This will:
+1. Crawl up to 50 pages of documentation
+2. Save to .skillforge/knowledge/<domain>/
+3. Print a summary of what was crawled
+
+The crawled docs persist across sessions and are automatically included in future /save-skill outputs.
+
+Use --limit N to crawl more or fewer pages:
+!python -m skillforge.firecrawl_crawl "$ARGUMENTS" --limit 100
+"""
+
+
 _TASK_CONTRACT = """# Task
 {task}
 
@@ -57,8 +85,9 @@ _TASK_CONTRACT = """# Task
 1) Attempt implementation immediately (do not stall on docs).
 2) Run required tests/build/bench commands.
 3) On failure: use /search-docs with the exact stderr/error text, apply fixes, and rerun.
-4) Repeat until passing.
-5) On success: run /save-skill <short-skill-name>.
+4) If search results are insufficient or you need deep understanding of a library, use /deep-dive <docs-url> to crawl entire documentation.
+5) Repeat until passing.
+6) On success: run /save-skill <short-skill-name>.
 """
 
 
@@ -70,6 +99,8 @@ def build_appended_system_prompt() -> str:
         "Run the required tests/build/bench. "
         "If anything fails, invoke /search-docs with the exact stderr/error text, "
         "apply fixes, and rerun until passing. "
+        "If search results are insufficient or you need comprehensive docs for a library, "
+        "use /deep-dive <docs-url> to crawl the entire documentation site. "
         "When done, invoke /save-skill <short-skill-name>."
     )
 
@@ -77,14 +108,17 @@ def build_appended_system_prompt() -> str:
 def ensure_core_skills(repo_root: Path) -> None:
     """Install or update the core SkillForge skills in the target repo."""
     skills_root = repo_root / ".claude" / "skills"
-    search_docs_path = skills_root / "search-docs" / "SKILL.md"
-    save_skill_path = skills_root / "save-skill" / "SKILL.md"
 
-    search_docs_path.parent.mkdir(parents=True, exist_ok=True)
-    save_skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skills = {
+        "search-docs": _SEARCH_DOCS_SKILL,
+        "save-skill": _SAVE_SKILL_SKILL,
+        "deep-dive": _DEEP_DIVE_SKILL,
+    }
 
-    search_docs_path.write_text(_SEARCH_DOCS_SKILL, encoding="utf-8")
-    save_skill_path.write_text(_SAVE_SKILL_SKILL, encoding="utf-8")
+    for skill_name, content in skills.items():
+        skill_path = skills_root / skill_name / "SKILL.md"
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(content, encoding="utf-8")
 
 
 def write_task_file(repo_root: Path, task: str) -> Path:
