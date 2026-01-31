@@ -38,29 +38,35 @@ Required:
 
 ### Core Flow
 
-1. **Core Skills Install** (`claude_runner.py`) - Writes `.claude/skills/{search-docs,save-skill}/SKILL.md`
-2. **Task Contract** (`claude_runner.py`) - Writes `.skillforge/TASK.md`
-3. **Claude Code Launch** (`claude_runner.py`) - Runs `claude "<task>" --append-system-prompt "<rules>"`
-4. **Retrieval** (`firecrawl_search.py`) - `/search-docs` executes Firecrawl queries and caches results
-5. **Skill Generation** (`generate_skill.py`) - `/save-skill` generates `.claude/skills/<name>/SKILL.md` and updates `.skillforge/registry.json`
+1. **Core Skills Install** (`claude_runner.py`) - Writes `.claude/skills/{search-docs,save-skill,deep-dive}/SKILL.md`
+2. **Verify Script Bootstrap** (`claude_runner.py`) - Writes `scripts/verify.sh`
+3. **Task Contract** (`claude_runner.py`) - Writes `.skillforge/TASK.md`
+4. **Claude Code Launch** (`claude_runner.py`) - Runs `claude "<task>" --append-system-prompt "<rules>"`
+5. **Retrieval** (`firecrawl_search.py`) - `/search-docs` executes Firecrawl queries and caches results
+6. **Deep Crawl** (`firecrawl_crawl.py`) - `/deep-dive` crawls entire doc sites into `.skillforge/knowledge/`
+7. **Skill Generation** (`generate_skill.py`) - `/save-skill` generates `.claude/skills/<name>/SKILL.md` with embedded knowledge
 
 ### Key Design Decisions
 
 **Claude Code as Coder**: No in-process model loop. The CLI only prepares the repo and launches the interactive `claude` session.
 
+**Verify Script**: `scripts/verify.sh` wraps any test/build command, streams output to terminal AND logs to `.skillforge/last_run.log`. Preserves exit codes via `PIPESTATUS[0]`.
+
 **Skill Storage**:
 - All skills (core and generated) live in `.claude/skills/<skill-name>/SKILL.md`
 
 **Retrieval Cache**:
-- `.skillforge/cache/<timestamp>_search.md` stores Firecrawl results.
+- `.skillforge/cache/<timestamp>_search.md` stores Firecrawl search results
+- `.skillforge/knowledge/<domain>/` stores crawled documentation
 
 ### Module Responsibilities
 
 | Module | Purpose |
 |--------|---------|
 | `cli.py` | Click command, prepares repo and launches Claude Code |
-| `claude_runner.py` | Core skills + task contract + launcher |
+| `claude_runner.py` | Core skills + verify.sh + task contract + launcher |
 | `firecrawl_client.py` | Wraps Firecrawl map/crawl/search APIs |
 | `firecrawl_search.py` | CLI for Firecrawl queries and cache writes |
-| `generate_skill.py` | Creates skill directory from task + trace |
+| `firecrawl_crawl.py` | CLI for deep doc crawls into knowledge base |
+| `generate_skill.py` | Creates skill directory from task + cached knowledge |
 | `exceptions.py` | Typed exception hierarchy (all inherit `SkillForgeError`) |
