@@ -139,7 +139,13 @@ def _looks_like_docs_domain(url: str) -> bool:
     )
 
 
-def discover_sources(task: str, seed_url: str) -> list[Source]:
+def discover_sources(
+    task: str,
+    seed_url: str,
+    *,
+    map_limit: int = 200,
+    search_limit: int = 5,
+) -> list[Source]:
     """
     Discover documentation sources for a task.
 
@@ -163,7 +169,7 @@ def discover_sources(task: str, seed_url: str) -> list[Source]:
 
     # Map the seed URL to discover linked pages
     try:
-        map_result = map_url(seed_url, limit=200)
+        map_result = map_url(seed_url, limit=map_limit)
         for link in map_result.urls:
             url = link["url"]
             # Filter to docs-like paths or same domain
@@ -187,7 +193,7 @@ def discover_sources(task: str, seed_url: str) -> list[Source]:
     # Search for supplementary materials (best-effort with warning)
     search_query = f"{task} documentation tutorial"
     try:
-        search_result = search(search_query, limit=5, scrape=True)
+        search_result = search(search_query, limit=search_limit, scrape=True)
         for item in search_result.results:
             tier = _classify_tier(item.url)
             sources.append(Source(
@@ -209,7 +215,13 @@ def discover_sources(task: str, seed_url: str) -> list[Source]:
     return sources
 
 
-def discover_sources_from_task(task: str, max_seeds: int = 3) -> list[Source]:
+def discover_sources_from_task(
+    task: str,
+    max_seeds: int = 3,
+    *,
+    search_limit: int = 5,
+    map_limit: int = 200,
+) -> list[Source]:
     """
     Discover sources without a seed URL by searching for official docs.
 
@@ -238,7 +250,7 @@ def discover_sources_from_task(task: str, max_seeds: int = 3) -> list[Source]:
     for query in search_queries:
         try:
             # Use scrape=False for discovery - we'll crawl these URLs later
-            search_result = search(query, limit=5, scrape=False)
+            search_result = search(query, limit=search_limit, scrape=False)
         except Exception as e:
             print(f"Warning: Seed search failed for '{query}': {e}", file=sys.stderr)
             continue
@@ -272,7 +284,14 @@ def discover_sources_from_task(task: str, max_seeds: int = 3) -> list[Source]:
     sources: list[Source] = []
     for seed_url in unique_candidates[:max_seeds]:
         try:
-            sources.extend(discover_sources(task, seed_url))
+            sources.extend(
+                discover_sources(
+                    task,
+                    seed_url,
+                    map_limit=map_limit,
+                    search_limit=search_limit,
+                )
+            )
         except DiscoveryError as e:
             print(f"Warning: Discovery failed for auto-seed {seed_url}: {e}", file=sys.stderr)
             continue
