@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Context
 
-This is a hackathon project for **Hack the Stackathon** - a builder-focused hackathon for data, AI, and modern tooling hosted by Firecrawl, Reducto, and Resend.
+This is a hackathon project for **Hack the Stackathon** - a builder-focused hackathon for data, AI, and modern tooling hosted by Firecrawl, Reducto, and Resend. This project is doing the Firecrawl track.
 
 **Judging priorities:**
 - Real data ingestion (live inputs, not mock data)
@@ -50,16 +50,16 @@ Required:
 1. **Config Validation** (`config.py`) - Checks API keys exist
 2. **Source Discovery** (`discovery.py`) - Maps seed URL, filters to docs paths, searches for supplementary content
 3. **Corpus Building** (`corpus.py`) - Crawls sources via Firecrawl, saves as markdown with YAML frontmatter
-4. **Teacher Session** (`teacher.py`) - Iterative loop where Claude attempts the task. On failure, extracts `KNOWLEDGE_GAP:` queries, searches for missing info, enriches corpus, retries
+4. **Teacher Session** (`teacher.py`) - Iterative loop where Claude attempts the task. Model responds via tool calls, analyzer checks completeness, and any gaps are searched to enrich corpus before retrying
 5. **Skill Generation** (`generator.py`) - Synthesizes successful trace into SKILL.md + tests.json
 
 ### Key Design Decisions
 
-**Teacher Protocol**: Model must respond with either:
-- `TASK_COMPLETE: <summary>` on success
-- `KNOWLEDGE_GAP: <search query>` when docs are insufficient
+**Teacher Protocol**: Model must call exactly one tool:
+- `task_complete` with a full solution and summary
+- `request_documentation` with a specific search query and reason
 
-If neither marker is present, the system raises `GapDetectionError` immediately rather than guessing.
+If the analyzer cannot confirm completeness or identify a gap, the system raises `AnalysisError` rather than guessing.
 
 **Corpus Storage**:
 - `corpus/corpus_<task>_<timestamp>/` contains numbered markdown files

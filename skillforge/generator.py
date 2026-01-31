@@ -9,6 +9,7 @@ from pathlib import Path
 from anthropic import Anthropic
 
 from .config import get_anthropic_api_key
+from .corpus import load_corpus_as_context
 from .teacher import TeacherResult
 from .exceptions import GenerationError
 
@@ -16,6 +17,9 @@ from .exceptions import GenerationError
 GENERATION_PROMPT = """Based on the following successful task completion, generate a SKILL.md file that teaches AI models how to complete this task.
 
 TASK: {task}
+
+DOCUMENTATION CORPUS USED:
+{corpus_content}
 
 SUCCESSFUL OUTPUT:
 {output}
@@ -31,10 +35,13 @@ Generate a comprehensive SKILL.md with the following structure:
 2. Overview section explaining what this skill does and when to use it
 3. Prerequisites section listing required tools, dependencies, or knowledge
 4. Core Concepts section with key terminology and foundational knowledge
-5. Step-by-Step Process with actual working code and commands
-6. Common Patterns section showing reusable approaches
-7. Troubleshooting section with potential issues and solutions
-8. Verification section describing how to test if the skill was applied correctly
+5. Key Documentation Excerpts - embed the most critical snippets from the corpus that are essential to completing this task (make the skill self-contained)
+6. Step-by-Step Process with actual working code and commands
+7. Common Patterns section showing reusable approaches
+8. Troubleshooting section with potential issues and solutions
+9. Verification section describing how to test if the skill was applied correctly
+
+IMPORTANT: The generated skill must be SELF-CONTAINED. Include the actual documentation excerpts needed to complete the task, not just references to them.
 
 Also generate JSON test cases that can verify the skill works.
 
@@ -112,9 +119,11 @@ def generate_skill(
 
     # Format inputs
     trace_summary = _format_trace_summary(result)
+    corpus_content = load_corpus_as_context(corpus_path)
 
     prompt = GENERATION_PROMPT.format(
         task=task,
+        corpus_content=corpus_content,
         output=result.final_output,
         trace_summary=trace_summary,
     )

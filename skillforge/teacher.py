@@ -9,34 +9,82 @@ from anthropic import Anthropic
 from .config import get_anthropic_api_key
 from .corpus import load_corpus_as_context, add_pages_to_corpus
 from .discovery import search_for_gap
-from .exceptions import TeacherSessionError, GapDetectionError, SearchError
+from .exceptions import TeacherSessionError, GapDetectionError, SearchError, AnalysisError
 
 
-TEACHER_SYSTEM_PROMPT = """You are an expert technical teacher. Your task is to demonstrate how to complete a specific task using the documentation provided.
+TEACHER_TOOLS = [
+    {
+        "name": "task_complete",
+        "description": "Call this when you have successfully completed the task with a full, working solution.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Brief summary of what was accomplished",
+                },
+                "solution": {
+                    "type": "string",
+                    "description": "The complete solution (code, commands, etc)",
+                },
+            },
+            "required": ["summary", "solution"],
+        },
+    },
+    {
+        "name": "request_documentation",
+        "description": "Call this when the provided documentation is insufficient to complete the task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_query": {
+                    "type": "string",
+                    "description": "Specific search query to find the missing information",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this information is needed",
+                },
+            },
+            "required": ["search_query", "reason"],
+        },
+    },
+]
+
+
+TEACHER_SYSTEM_PROMPT = """You are an expert technical teacher completing a task using the documentation provided.
 
 TASK: {task}
-
-You have access to the following documentation corpus:
 
 <documentation>
 {corpus_context}
 </documentation>
 
----
+Complete the task using ONLY the documentation above. When finished, use one of the available tools:
+- task_complete: When you have a full working solution
+- request_documentation: When the docs are insufficient (be specific about what's missing)
 
-INSTRUCTIONS:
-1. Carefully study the documentation above
-2. Provide a complete, working solution for the task
-3. Include all necessary code, commands, and explanations
-4. Be thorough and precise - reference specific sections of the documentation where relevant
+You MUST call exactly one tool."""
 
-If you encounter a knowledge gap where the documentation is insufficient to complete the task, clearly state:
-KNOWLEDGE_GAP: <specific search query to find the missing information>
 
-If you can complete the task successfully, end your response with:
-TASK_COMPLETE: <brief summary of what was accomplished>
+ANALYSIS_PROMPT = """Analyze this attempted task completion.
 
-Remember: You MUST either identify a specific knowledge gap OR complete the task successfully. Do not provide partial solutions without indicating what's missing."""
+TASK: {task}
+ATTEMPT OUTPUT:
+{output}
+
+Does this output contain a complete, working solution? Look for:
+- Missing configuration files
+- Incomplete code (TODOs, placeholders, "..." )
+- References to things not defined
+- Explicit uncertainty ("I think", "might need", "not sure")
+
+If incomplete, what specific topic should be searched to fill the gap?
+
+Respond with EXACTLY one of:
+COMPLETE: <summary>
+INCOMPLETE: <specific search query for missing info>
+AMBIGUOUS: <what's unclear>"""
 
 
 @dataclass
@@ -45,6 +93,8 @@ class AttemptOutcome:
     output: str
     gap_query: str | None = None
     error_message: str | None = None
+    analysis_summary: str | None = None
+    analysis_raw: str | None = None
 
 
 @dataclass
@@ -56,65 +106,112 @@ class TeacherResult:
     gaps_filled: list[str] = field(default_factory=list)
 
 
-def _extract_gap_query(output: str) -> str | None:
-    """Extract knowledge gap query from model output."""
-    marker = "KNOWLEDGE_GAP:"
-    if marker in output:
-        idx = output.find(marker)
-        rest = output[idx + len(marker):].strip()
-        # Take until newline or end
-        end = rest.find("\n")
-        query = rest[:end].strip() if end > 0 else rest.strip()
-        if query:
-            return query
+def _parse_analysis_output(analysis_text: str, attempt_output: str) -> AttemptOutcome:
+    """Parse analyzer output into AttemptOutcome."""
+    cleaned = analysis_text.strip()
+    if cleaned.startswith("COMPLETE:"):
+        summary = cleaned[len("COMPLETE:"):].strip()
+        return AttemptOutcome(
+            success=True,
+            output=attempt_output,
+            analysis_summary=summary,
+            analysis_raw=analysis_text,
+        )
+    if cleaned.startswith("INCOMPLETE:"):
+        query = cleaned[len("INCOMPLETE:"):].strip()
+        if not query:
+            return AttemptOutcome(
+                success=False,
+                output=attempt_output,
+                error_message="Analyzer returned INCOMPLETE without a search query.",
+                analysis_raw=analysis_text,
+            )
+        return AttemptOutcome(
+            success=False,
+            output=attempt_output,
+            gap_query=query,
+            analysis_raw=analysis_text,
+        )
+    if cleaned.startswith("AMBIGUOUS:"):
+        detail = cleaned[len("AMBIGUOUS:"):].strip() or "Analyzer returned AMBIGUOUS."
+        return AttemptOutcome(
+            success=False,
+            output=attempt_output,
+            error_message=detail,
+            analysis_raw=analysis_text,
+        )
+    return AttemptOutcome(
+        success=False,
+        output=attempt_output,
+        error_message=f"Analyzer output did not match expected format: {analysis_text!r}",
+        analysis_raw=analysis_text,
+    )
 
-    # Heuristic fallbacks for common gap indicators
-    gap_phrases = [
-        ("I don't have information about", "."),
-        ("The documentation doesn't cover", "."),
-        ("I need more details on", "."),
-        ("Missing information about", "."),
-        ("I couldn't find documentation for", "."),
-        ("The docs don't mention", "."),
-    ]
-    output_lower = output.lower()
-    for phrase, delimiter in gap_phrases:
-        if phrase.lower() in output_lower:
-            idx = output_lower.find(phrase.lower())
-            rest = output[idx + len(phrase):].strip()
-            end = rest.find(delimiter)
-            if end > 0 and end < 100:
-                return rest[:end].strip()
 
-    return None
+def _join_text_blocks(content) -> str:
+    """Concatenate all text blocks from a Claude response."""
+    parts: list[str] = []
+    for block in content:
+        if getattr(block, "type", None) == "text":
+            parts.append(block.text)
+    return "".join(parts).strip()
 
 
-def _check_task_complete(output: str) -> bool:
-    """Check if task was completed successfully."""
-    return "TASK_COMPLETE:" in output
+def _extract_tool_use(response) -> tuple[str, dict, str]:
+    """Extract exactly one tool call and any text output."""
+    tool_uses = []
+    text_parts: list[str] = []
+    for block in response.content:
+        if getattr(block, "type", None) == "tool_use":
+            tool_uses.append(block)
+        elif getattr(block, "type", None) == "text":
+            text_parts.append(block.text)
+
+    text_output = "".join(text_parts).strip()
+    if len(tool_uses) != 1:
+        raise GapDetectionError(
+            f"Expected exactly one tool call, got {len(tool_uses)}. "
+            f"Text output preview: {text_output[:500]}..."
+        )
+    tool_use = tool_uses[0]
+    tool_name = tool_use.name
+    tool_input = tool_use.input or {}
+    return tool_name, tool_input, text_output
+
+
+def _require_tool_field(tool_name: str, tool_input: dict, field: str) -> str:
+    value = tool_input.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise GapDetectionError(f"Tool '{tool_name}' missing required field '{field}'.")
+    return value.strip()
+
+
+def _run_analysis(
+    client: Anthropic,
+    task: str,
+    attempt_output: str,
+    model: str,
+) -> AttemptOutcome:
+    analysis_prompt = ANALYSIS_PROMPT.format(task=task, output=attempt_output)
+    response = client.messages.create(
+        model=model,
+        max_tokens=512,
+        messages=[{"role": "user", "content": analysis_prompt}],
+    )
+    analysis_text = _join_text_blocks(response.content)
+    return _parse_analysis_output(analysis_text, attempt_output)
 
 
 def analyze_attempt(output: str) -> AttemptOutcome:
-    """Analyze model output to determine success/failure and any knowledge gaps."""
-    if _check_task_complete(output):
-        return AttemptOutcome(success=True, output=output)
-
-    gap = _extract_gap_query(output)
-    if gap:
-        return AttemptOutcome(success=False, output=output, gap_query=gap)
-
-    # No explicit gap but also not complete
-    return AttemptOutcome(
-        success=False,
-        output=output,
-        error_message="Task not completed and no specific knowledge gap identified",
-    )
+    """Parse analyzer output into AttemptOutcome."""
+    return _parse_analysis_output(output, output)
 
 
 def run_teacher_session(
     task: str,
     corpus_path: Path,
     model: str = "claude-sonnet-4-20250514",
+    analysis_model: str | None = None,
     max_attempts: int = 5,
     verbose: bool = False,
     on_attempt: callable = None,
@@ -127,9 +224,10 @@ def run_teacher_session(
     2. Ask model to complete task
     3. Analyze response for success/failure
     4. If failed with identifiable gap: search, enrich corpus, retry
-    5. If failed without identifiable gap: raise GapDetectionError immediately
+    5. If failed without identifiable gap: raise AnalysisError immediately
     """
     client = Anthropic(api_key=get_anthropic_api_key())
+    analysis_model = analysis_model or model
 
     trace: list[dict] = []
     gaps_filled: list[str] = []
@@ -149,19 +247,37 @@ def run_teacher_session(
             max_tokens=8192,
             system=system,
             messages=messages,
+            tools=TEACHER_TOOLS,
+            tool_choice={"type": "any"},
         )
 
-        output = response.content[0].text
+        tool_name, tool_input, text_output = _extract_tool_use(response)
 
         trace_entry = {
             "attempt": attempt,
             "input": messages,
-            "output": output,
+            "text_output": text_output,
+            "tool_call": tool_name,
+            "tool_input": tool_input,
             "model": model,
         }
 
         # Analyze
-        outcome = analyze_attempt(output)
+        if tool_name == "task_complete":
+            solution = _require_tool_field(tool_name, tool_input, "solution")
+            summary = _require_tool_field(tool_name, tool_input, "summary")
+            trace_entry["tool_summary"] = summary
+
+            outcome = _run_analysis(client, task, solution, analysis_model)
+            trace_entry["analysis_output"] = outcome.analysis_raw
+            if outcome.analysis_summary:
+                trace_entry["analysis_summary"] = outcome.analysis_summary
+        elif tool_name == "request_documentation":
+            gap_query = _require_tool_field(tool_name, tool_input, "search_query")
+            trace_entry["gap_reason"] = _require_tool_field(tool_name, tool_input, "reason")
+            outcome = AttemptOutcome(success=False, output=text_output, gap_query=gap_query)
+        else:
+            raise GapDetectionError(f"Unknown tool call '{tool_name}'.")
 
         if on_attempt:
             on_attempt(attempt, outcome)
@@ -171,7 +287,7 @@ def run_teacher_session(
             return TeacherResult(
                 success=True,
                 trace=trace,
-                final_output=output,
+                final_output=outcome.output,
                 attempts=attempt,
                 gaps_filled=gaps_filled,
             )
@@ -196,10 +312,9 @@ def run_teacher_session(
         else:
             # No gap identified - raise immediately per PRD
             trace.append(trace_entry)
-            raise GapDetectionError(
+            raise AnalysisError(
                 f"Task failed on attempt {attempt} without identifiable knowledge gap. "
-                f"Model output did not contain TASK_COMPLETE or KNOWLEDGE_GAP markers. "
-                f"Output preview: {output[:500]}..."
+                f"Analyzer output: {outcome.analysis_raw or outcome.error_message}"
             )
 
     raise TeacherSessionError(f"Max attempts ({max_attempts}) reached without success")
