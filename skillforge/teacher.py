@@ -1,5 +1,6 @@
 """Teacher model session with retry loop."""
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from anthropic import Anthropic
 from .config import get_anthropic_api_key
 from .corpus import load_corpus_as_context, add_pages_to_corpus
 from .discovery import search_for_gap
-from .exceptions import TeacherSessionError, SearchError
+from .exceptions import TeacherSessionError, GapDetectionError, SearchError
 
 
 TEACHER_SYSTEM_PROMPT = """You are an expert technical teacher. Your task is to demonstrate how to complete a specific task using the documentation provided.
@@ -126,7 +127,7 @@ def run_teacher_session(
     2. Ask model to complete task
     3. Analyze response for success/failure
     4. If failed with identifiable gap: search, enrich corpus, retry
-    5. If failed without identifiable gap: raise error
+    5. If failed without identifiable gap: raise GapDetectionError immediately
     """
     client = Anthropic(api_key=get_anthropic_api_key())
 
@@ -185,18 +186,20 @@ def run_teacher_session(
                     added = add_pages_to_corpus(corpus_path, gap_sources)
                     gaps_filled.append(outcome.gap_query)
                     trace_entry["gap_sources_added"] = added
-            except SearchError:
-                # If search fails, continue to next attempt anyway
+            except SearchError as e:
+                # Log warning instead of silent pass
+                print(f"Warning: Gap search failed for '{outcome.gap_query}': {e}", file=sys.stderr)
                 trace_entry["gap_search_failed"] = True
+                trace_entry["gap_search_error"] = str(e)
 
             trace.append(trace_entry)
         else:
-            # No gap to fill - give it one more try or fail
+            # No gap identified - raise immediately per PRD
             trace.append(trace_entry)
-            if attempt == max_attempts:
-                raise TeacherSessionError(
-                    f"Task failed without identifiable knowledge gap after {attempt} attempts. "
-                    f"Last output: {output[:500]}..."
-                )
+            raise GapDetectionError(
+                f"Task failed on attempt {attempt} without identifiable knowledge gap. "
+                f"Model output did not contain TASK_COMPLETE or KNOWLEDGE_GAP markers. "
+                f"Output preview: {output[:500]}..."
+            )
 
     raise TeacherSessionError(f"Max attempts ({max_attempts}) reached without success")

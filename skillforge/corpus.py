@@ -2,14 +2,15 @@
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from .discovery import Source, SourceType
-from .firecrawl_client import crawl_url, CrawledPage
-from .exceptions import CorpusBuildError, CorpusLoadError, CorpusUpdateError
+from .firecrawl_client import crawl_url
+from .exceptions import CorpusBuildError, CorpusLoadError, CorpusUpdateError, FirecrawlCrawlError
 
 
 @dataclass
@@ -78,14 +79,21 @@ priority: {priority}
     )
 
 
+def _get_base_url(url: str) -> str:
+    """Extract base URL (scheme + netloc) from a URL."""
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
     """
     Build a corpus from discovered sources.
 
-    1. Crawl the seed URL
-    2. Add any pre-fetched search results
-    3. Save pages as markdown with frontmatter
-    4. Create manifest.json
+    1. Group SEED and MAPPED sources by domain
+    2. Crawl each domain with include_paths from mapped URLs
+    3. Add any pre-fetched search results
+    4. Save pages as markdown with frontmatter
+    5. Create manifest.json
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     corpus_name = f"corpus_{_slugify(task)}_{timestamp}"
@@ -95,18 +103,49 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
     pages_info: list[PageInfo] = []
     page_index = 1
     seen_urls: set[str] = set()
+    remaining_limit = limit
+    crawl_errors: list[str] = []
 
-    # Find seed URL (first source with SEED type)
+    # Find seed URL for manifest
     seed_url = None
     for source in sources:
         if source.source_type == SourceType.SEED:
             seed_url = source.url
             break
 
-    # Crawl the seed URL
-    if seed_url:
+    # Group SEED and MAPPED sources by base URL (domain)
+    domain_sources: dict[str, list[Source]] = {}
+    for source in sources:
+        if source.source_type in (SourceType.SEED, SourceType.MAPPED):
+            base = _get_base_url(source.url)
+            if base not in domain_sources:
+                domain_sources[base] = []
+            domain_sources[base].append(source)
+
+    # Crawl each domain
+    for base_url, domain_srcs in domain_sources.items():
+        if remaining_limit <= 0:
+            break
+
+        # Build include_paths from the mapped URLs for this domain
+        include_paths = []
+        for src in domain_srcs:
+            parsed = urlparse(src.url)
+            if parsed.path and parsed.path != "/":
+                # Convert path to regex pattern (strip leading slash, escape special chars)
+                path = parsed.path.lstrip("/").rstrip("/")
+                if path:
+                    include_paths.append(f"{re.escape(path)}.*")
+
+        # Deduplicate include_paths
+        include_paths = list(set(include_paths)) if include_paths else None
+
         try:
-            crawl_result = crawl_url(seed_url, limit=limit)
+            crawl_result = crawl_url(
+                base_url,
+                limit=remaining_limit,
+                include_paths=include_paths,
+            )
             for page in crawl_result.pages:
                 if page.url in seen_urls:
                     continue
@@ -122,8 +161,18 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50) -> Path:
                 )
                 pages_info.append(info)
                 page_index += 1
-        except Exception as e:
-            raise CorpusBuildError(f"Failed to crawl seed URL {seed_url}: {e}") from e
+                remaining_limit -= 1
+                if remaining_limit <= 0:
+                    break
+        except FirecrawlCrawlError as e:
+            crawl_errors.append(f"{base_url}: {e}")
+            print(f"Warning: Failed to crawl {base_url}: {e}", file=sys.stderr)
+
+    # If all crawls failed, raise error
+    if not pages_info and crawl_errors:
+        raise CorpusBuildError(
+            f"All crawl attempts failed:\n" + "\n".join(crawl_errors)
+        )
 
     # Add any pre-fetched content from search results
     for source in sources:
@@ -183,14 +232,28 @@ def load_corpus_as_context(corpus_path: Path) -> str:
     parts = []
     for page_info in manifest["pages"]:
         page_path = corpus_path / page_info["filename"]
-        if page_path.exists():
-            content = page_path.read_text(encoding="utf-8")
-            # Skip frontmatter for context
-            if content.startswith("---"):
-                end_idx = content.find("---", 3)
-                if end_idx > 0:
-                    content = content[end_idx + 3:].strip()
-            parts.append(f"=== SOURCE: {page_info['url']} ===\n\n{content}")
+
+        # Strict: missing files are errors
+        if not page_path.exists():
+            raise CorpusLoadError(
+                f"Manifest references missing file: {page_info['filename']}"
+            )
+
+        content = page_path.read_text(encoding="utf-8")
+
+        # Strict: empty files are errors
+        if not content.strip():
+            raise CorpusLoadError(
+                f"Corpus file is empty: {page_info['filename']}"
+            )
+
+        # Skip frontmatter for context
+        if content.startswith("---"):
+            end_idx = content.find("---", 3)
+            if end_idx > 0:
+                content = content[end_idx + 3:].strip()
+
+        parts.append(f"=== SOURCE: {page_info['url']} ===\n\n{content}")
 
     if not parts:
         raise CorpusLoadError(f"No pages found in corpus at {corpus_path}")

@@ -1,5 +1,6 @@
 """Source discovery using Firecrawl."""
 
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
@@ -81,7 +82,7 @@ def discover_sources(task: str, seed_url: str) -> list[Source]:
     except Exception as e:
         raise DiscoveryError(f"Failed to map seed URL {seed_url}: {e}") from e
 
-    # Search for supplementary materials (best-effort, don't fail if search fails)
+    # Search for supplementary materials (best-effort with warning)
     search_query = f"{task} documentation tutorial"
     try:
         search_result = search(search_query, limit=5, scrape=True)
@@ -93,8 +94,9 @@ def discover_sources(task: str, seed_url: str) -> list[Source]:
                 priority=7,
                 content=item.markdown,
             ))
-    except Exception:
-        pass  # Supplementary search is best-effort
+    except Exception as e:
+        # Log warning instead of silent pass
+        print(f"Warning: Supplementary search failed for '{search_query}': {e}", file=sys.stderr)
 
     # Deduplicate and sort by priority
     sources = _deduplicate_sources(sources)
