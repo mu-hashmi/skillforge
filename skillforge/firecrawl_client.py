@@ -197,19 +197,35 @@ def search(
 
         if web_results:
             for item in web_results:
-                if hasattr(item, "url"):
-                    items.append(SearchResultItem(
-                        url=item.url,
-                        title=getattr(item, "title", None),
-                        description=getattr(item, "description", None),
-                        markdown=getattr(item, "markdown", None),
-                    ))
+                url = None
+                title = None
+                description = None
+                markdown = getattr(item, "markdown", None)
+
+                # Handle Document objects (returned when scrape_options is used)
+                if hasattr(item, "metadata") and item.metadata:
+                    meta = item.metadata
+                    url = getattr(meta, "url", None) or getattr(meta, "source_url", None)
+                    title = getattr(meta, "title", None) or getattr(meta, "og_title", None)
+                    description = getattr(meta, "description", None) or getattr(meta, "og_description", None)
+                # Handle SearchResultWeb objects (returned without scrape_options)
+                elif hasattr(item, "url"):
+                    url = item.url
+                    title = getattr(item, "title", None)
+                    description = getattr(item, "description", None)
+                # Handle dict
                 elif isinstance(item, dict):
+                    url = item.get("url")
+                    title = item.get("title")
+                    description = item.get("description")
+                    markdown = item.get("markdown")
+
+                if url:
                     items.append(SearchResultItem(
-                        url=item["url"],
-                        title=item.get("title"),
-                        description=item.get("description"),
-                        markdown=item.get("markdown"),
+                        url=url,
+                        title=title,
+                        description=description,
+                        markdown=markdown,
                     ))
 
         # Empty results is valid, not an error
