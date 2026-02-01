@@ -5,6 +5,7 @@ description = "Generate agent skills from documentation using Firecrawl"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.40.0",
     "click>=8.3.1",
     "firecrawl-py>=4.14.0",
 ]

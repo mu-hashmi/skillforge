@@ -4,12 +4,90 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import anthropic
+
 from .exceptions import GenerationError
+
+SUMMARIZE_SECTION_PROMPT = """\
+Extract the key technical information from this documentation that's relevant to the task.
+Focus on: code examples, API patterns, configuration, known issues/gotchas, error solutions.
+Be concise but preserve important details. Output markdown.
+
+Task: {task}
+
+Documentation:
+{section}"""
+
+SYNTHESIZE_PROMPT = """\
+Combine these documentation summaries into a concise technical reference.
+Structure it with clear headers. Prioritize: code examples, patterns, known issues.
+This will be embedded in a skill file that Claude Code loads, so it should contain
+everything needed to complete the task without additional searches.
+
+Task: {task}
+
+Summaries:
+{summaries}"""
+
+
+def _summarize_knowledge(knowledge: str, task: str) -> str:
+    """Summarize raw knowledge into a concise reference using Claude."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise GenerationError("ANTHROPIC_API_KEY environment variable required for summarization")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    model = "claude-3-5-haiku-latest"
+
+    # Split by search result sections
+    sections = re.split(r"(?=## From search:|## From https?://)", knowledge)
+    sections = [s.strip() for s in sections if s.strip() and len(s) > 500]
+
+    if not sections:
+        return ""
+
+    summaries = []
+    for section in sections:
+        # Truncate very long sections to stay within context
+        truncated = section[:50000] if len(section) > 50000 else section
+        try:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=1500,
+                messages=[{
+                    "role": "user",
+                    "content": SUMMARIZE_SECTION_PROMPT.format(task=task, section=truncated),
+                }],
+            )
+            summaries.append(resp.content[0].text)
+        except anthropic.APIError as e:
+            print(f"Warning: Failed to summarize section: {e}", file=sys.stderr)
+            continue
+
+    if not summaries:
+        return ""
+
+    # Synthesize into final reference
+    combined = "\n\n---\n\n".join(summaries)
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=3000,
+            messages=[{
+                "role": "user",
+                "content": SYNTHESIZE_PROMPT.format(task=task, summaries=combined),
+            }],
+        )
+        return resp.content[0].text
+    except anthropic.APIError as e:
+        print(f"Warning: Failed to synthesize summaries: {e}", file=sys.stderr)
+        return combined  # Fall back to concatenated summaries
 
 
 def _slugify(value: str) -> str:
@@ -124,7 +202,14 @@ def _write_registry(repo_root: Path, task: str, skill_name: str, out_dir: Path, 
     registry_path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
 
 
-def _write_skill(skill_dir: Path, skill_name: str, task: str, trace_text: str | None, knowledge: str | None) -> None:
+def _write_skill(
+    skill_dir: Path,
+    skill_name: str,
+    task: str,
+    trace_text: str | None,
+    knowledge_summary: str | None,
+    raw_knowledge: str | None,
+) -> None:
     skill_dir.mkdir(parents=True, exist_ok=True)
 
     description = f"Reusable workflow for: {task.replace('\n', ' ').strip()}"
@@ -143,7 +228,7 @@ def _write_skill(skill_dir: Path, skill_name: str, task: str, trace_text: str | 
         "",
         "# Workflow",
         "",
-        "1) Attempt implementation immediately.",
+        "1) Attempt implementation immediately using the Key Documentation below.",
         "2) Run the required tests/build/bench commands.",
         "3) If failures occur, capture exact stderr/error text and run /search-docs.",
         "4) Apply fixes and rerun until passing.",
@@ -157,20 +242,23 @@ def _write_skill(skill_dir: Path, skill_name: str, task: str, trace_text: str | 
         "- Use /search-docs with the exact error output.",
     ]
 
-    # Add embedded knowledge if present
-    if knowledge:
-        references_dir = skill_dir / "references"
-        references_dir.mkdir(parents=True, exist_ok=True)
-        knowledge_path = references_dir / "knowledge.md"
-        knowledge_path.write_text(knowledge.strip() + "\n", encoding="utf-8")
+    # Add summarized knowledge inline
+    if knowledge_summary:
         body.extend(
             [
                 "",
                 "# Key Documentation",
                 "",
-                "See references/knowledge.md for cached searches and crawled documentation.",
+                knowledge_summary.strip(),
             ]
         )
+
+    # Optionally save raw knowledge for reference
+    if raw_knowledge:
+        references_dir = skill_dir / "references"
+        references_dir.mkdir(parents=True, exist_ok=True)
+        knowledge_path = references_dir / "raw_knowledge.md"
+        knowledge_path.write_text(raw_knowledge.strip() + "\n", encoding="utf-8")
 
     if trace_text:
         references_dir = skill_dir / "references"
@@ -201,12 +289,20 @@ def generate_skill(name: str, task_file: Path, out_dir: Path, trace_file: Path |
 
     trace_text = _load_trace(trace_file)
     repo_root = task_file.parent.parent
-    knowledge = _collect_knowledge(repo_root)
+    raw_knowledge = _collect_knowledge(repo_root)
+
+    # Summarize knowledge for inline embedding
+    knowledge_summary = None
+    if raw_knowledge:
+        print("Summarizing knowledge...", file=sys.stderr)
+        knowledge_summary = _summarize_knowledge(raw_knowledge, task)
+        if knowledge_summary:
+            print(f"Generated {len(knowledge_summary)} char summary", file=sys.stderr)
 
     if out_dir.name != skill_name:
         out_dir = out_dir.parent / skill_name
 
-    _write_skill(out_dir, skill_name, task, trace_text, knowledge)
+    _write_skill(out_dir, skill_name, task, trace_text, knowledge_summary, raw_knowledge)
     _write_registry(repo_root, task, skill_name, out_dir, trace_file)
     return out_dir
 
