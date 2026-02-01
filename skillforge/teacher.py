@@ -1,5 +1,6 @@
 """Teacher model session with retry loop."""
 
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -89,6 +90,19 @@ class TeacherResult:
 
 def _extract_gap_query(output: str) -> str | None:
     """Extract knowledge gap query from model output."""
+    # Match KNOWLEDGE_GAP with optional markdown formatting (bold, italic)
+    # Handles: KNOWLEDGE_GAP:, **KNOWLEDGE_GAP**:, **KNOWLEDGE_GAP:**, *KNOWLEDGE_GAP*:, etc.
+    gap_pattern = r'\*{0,2}KNOWLEDGE_GAP\*{0,2}\s*:\s*\**\s*(.+?)(?:\n|$)'
+    match = re.search(gap_pattern, output, re.IGNORECASE)
+    if match:
+        query = match.group(1).strip()
+        # Clean up any trailing markdown or quotes
+        query = re.sub(r'\*+$', '', query).strip()
+        query = query.strip('"\'')
+        if query:
+            return query
+
+    # Also try simple marker detection as fallback
     marker = "KNOWLEDGE_GAP:"
     if marker in output:
         idx = output.find(marker)
@@ -107,6 +121,7 @@ def _extract_gap_query(output: str) -> str | None:
         ("Missing information about", "."),
         ("I couldn't find documentation for", "."),
         ("The docs don't mention", "."),
+        ("I need to search for", "."),
     ]
     output_lower = output.lower()
     for phrase, delimiter in gap_phrases:
@@ -122,7 +137,10 @@ def _extract_gap_query(output: str) -> str | None:
 
 def _check_task_complete(output: str) -> bool:
     """Check if task was completed successfully."""
-    return "TASK_COMPLETE:" in output
+    # Match TASK_COMPLETE with optional markdown formatting
+    # Handles: TASK_COMPLETE:, **TASK_COMPLETE**:, **TASK_COMPLETE:**, etc.
+    pattern = r'\*{0,2}TASK_COMPLETE\*{0,2}\s*:'
+    return bool(re.search(pattern, output, re.IGNORECASE))
 
 
 def analyze_attempt(
