@@ -12,14 +12,14 @@ from .exceptions import ClaudeRunnerError
 
 _SEARCH_DOCS_SKILL = """---
 name: search-docs
-description: Firecrawl-powered docs search. Use when build failed, test failure, compiler error, CUDA error, import error, linker error, segfault, runtime error, stack trace, or any error output needs targeted documentation lookup.
+description: Firecrawl-powered docs search. Use when verify fails - paste error output to find relevant documentation.
 allowed-tools:
   - Bash
 ---
 
 # /search-docs
 
-Use this when you have raw stderr/error text or a focused query.
+Use when you hit an error and need docs. Paste the error text as the argument.
 
 Run:
 !python -m skillforge.firecrawl_search "$ARGUMENTS"
@@ -102,24 +102,25 @@ _TASK_CONTRACT = """# Task
 {task}
 
 # Loop contract
-1) First, determine the verify command (build + tests) for this task. Write it to .skillforge/verify_command.txt
-2) Implement the task.
-3) After each meaningful change, run: ./scripts/verify.sh -- bash -lc "$(cat .skillforge/verify_command.txt)"
-4) On failure: run `tail -n 200 .skillforge/last_run.log`, invoke /search-docs with that output, optionally /deep-dive <docs-url>, then retry.
-5) Repeat until passing.
-6) On success: run /save-skill <short-skill-name>.
+1) Write verify command to .skillforge/verify_command.txt
+2) Implement immediately using existing knowledge (no research)
+3) After changes: ./scripts/verify.sh -- bash -lc "$(cat .skillforge/verify_command.txt)"
+4) On failure: tail -n 200 .skillforge/last_run.log, then /search-docs <error>, retry
+5) On success: /save-skill <name>
+
+Do NOT use WebSearch or WebFetch.
 """
 
 
 def build_appended_system_prompt() -> str:
     """Return the system prompt appended to Claude Code."""
     return (
-        "Read .skillforge/TASK.md first. "
-        "First, determine the verify command (build + tests) and write it to .skillforge/verify_command.txt. "
-        "Implement with current knowledge. "
-        "After each meaningful change, run: ./scripts/verify.sh -- bash -lc \"$(cat .skillforge/verify_command.txt)\". "
-        "On failure, tail the log and invoke /search-docs, optionally /deep-dive <docs-url>, then retry. "
-        "On success, invoke /save-skill <short-skill-name>."
+        "Do NOT use WebSearch or WebFetch. "
+        "Read .skillforge/TASK.md, then start implementing immediately with your existing knowledge. "
+        "Write verify command to .skillforge/verify_command.txt, then code. "
+        "Run ./scripts/verify.sh -- bash -lc \"$(cat .skillforge/verify_command.txt)\" after changes. "
+        "On failure: tail the log, use /search-docs <error text>, retry. "
+        "On success: /save-skill <name>."
     )
 
 
