@@ -101,8 +101,8 @@ def crawl_url(
     """Crawl a URL and its subpages.
 
     Args:
-        stealth: Use stealth proxies for sites with anti-bot protection.
-                 Note: costs ~9x more per request but bypasses many blockers.
+        stealth: If True, force stealth proxies. If False, use "auto" mode
+                 which lets Firecrawl decide based on the target site.
     """
     client = _get_client()
     try:
@@ -111,8 +111,9 @@ def crawl_url(
             kwargs["include_paths"] = include_paths
         if exclude_paths:
             kwargs["exclude_paths"] = exclude_paths
-        if stealth:
-            kwargs["scrape_options"] = {"proxy": "stealth"}
+        # Use "auto" by default, "stealth" only when explicitly requested
+        proxy_mode = "stealth" if stealth else "auto"
+        kwargs["scrape_options"] = {"proxy": proxy_mode}
 
         result = client.crawl(url, **kwargs)
 
@@ -176,15 +177,16 @@ def search(
     """Search the web for relevant content.
 
     Args:
-        stealth: Use stealth proxies for sites with anti-bot protection.
+        stealth: If True, force stealth proxies. If False, use "auto" mode
+                 which lets Firecrawl decide based on the target site.
     """
     client = _get_client()
     try:
         kwargs = {"limit": limit}
         if scrape:
             scrape_opts = {"formats": ["markdown"]}
-            if stealth:
-                scrape_opts["proxy"] = "stealth"
+            # Use "auto" by default, "stealth" only when explicitly requested
+            scrape_opts["proxy"] = "stealth" if stealth else "auto"
             kwargs["scrape_options"] = scrape_opts
 
         result = client.search(query, **kwargs)

@@ -1,15 +1,37 @@
 [project]
 name = "skillforge"
 version = "0.1.0"
-description = "Generate agent skills from documentation using Firecrawl"
+description = "Generate agent skills from documentation using Firecrawl and Claude. When Claude fails a task, Skillforge auto-discovers docs and produces reusable SKILL.md files."
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Ranoobaba"}
+]
+keywords = ["ai", "skills", "documentation", "firecrawl", "claude", "agents", "llm", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "anthropic>=0.77.0",
     "click>=8.3.1",
     "firecrawl-py>=4.14.0",
-    "rich>=14.3.1",
+    "python-dotenv>=1.0.0",
+    "rich>=14.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Ranoobaba/skillforge"
+Repository = "https://github.com/Ranoobaba/skillforge"
+Documentation = "https://github.com/Ranoobaba/skillforge#readme"
+Issues = "https://github.com/Ranoobaba/skillforge/issues"
 
 [project.scripts]
 skillforge = "skillforge.cli:main"

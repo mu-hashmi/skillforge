@@ -2,6 +2,7 @@
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,54 @@ from anthropic import Anthropic
 from .config import get_anthropic_api_key
 from .teacher import TeacherResult
 from .exceptions import GenerationError
+
+
+def _update_claude_md(skill_name: str, task: str, skill_path: Path) -> bool:
+    """Add the new skill to CLAUDE.md's Available Skills section.
+
+    Returns True if CLAUDE.md was updated, False otherwise.
+    """
+    claude_md_path = Path.cwd() / "CLAUDE.md"
+
+    if not claude_md_path.exists():
+        print(f"  Note: CLAUDE.md not found, skipping skill registration", file=sys.stderr)
+        return False
+
+    content = claude_md_path.read_text(encoding="utf-8")
+
+    # Create the skill entry
+    relative_path = skill_path.relative_to(Path.cwd()) if skill_path.is_relative_to(Path.cwd()) else skill_path
+    skill_entry = f"- `/{skill_name}` - {task} (see `{relative_path}/SKILL.md`)"
+
+    # Check if skill already exists
+    if f"`/{skill_name}`" in content:
+        print(f"  Note: Skill /{skill_name} already in CLAUDE.md", file=sys.stderr)
+        return False
+
+    # Find the "## Available Skills" section and add the new skill
+    available_skills_marker = "## Available Skills"
+
+    if available_skills_marker not in content:
+        # Add the section if it doesn't exist
+        content = content.rstrip() + f"\n\n{available_skills_marker}\n\n{skill_entry}\n"
+    else:
+        # Find the end of the Available Skills section (next ## or end of file)
+        marker_pos = content.find(available_skills_marker)
+        after_marker = content[marker_pos + len(available_skills_marker):]
+
+        # Find next section or end
+        next_section = after_marker.find("\n## ")
+        if next_section == -1:
+            # No next section, append at end
+            content = content.rstrip() + f"\n{skill_entry}\n"
+        else:
+            # Insert before next section
+            insert_pos = marker_pos + len(available_skills_marker) + next_section
+            # Find the last newline before the next section
+            content = content[:insert_pos].rstrip() + f"\n{skill_entry}\n" + content[insert_pos:]
+
+    claude_md_path.write_text(content, encoding="utf-8")
+    return True
 
 
 GENERATION_PROMPT = """Based on the following successful task completion, generate a SKILL.md file that teaches AI models how to complete this task.
@@ -173,5 +222,9 @@ def generate_skill(
     }
     manifest_path = output_dir / "skill_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    # Register skill in CLAUDE.md
+    if _update_claude_md(skill_name, task, output_dir):
+        print(f"  Registered /{skill_name} in CLAUDE.md", file=sys.stderr)
 
     return output_dir

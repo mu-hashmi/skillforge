@@ -139,6 +139,101 @@ def _looks_like_docs_domain(url: str) -> bool:
     )
 
 
+def _is_crawlable_url(url: str) -> bool:
+    """Check if a URL is actually crawlable (not just a bare domain)."""
+    parsed = urlparse(url)
+    path = parsed.path.strip("/")
+    full_url = url.lower()
+
+    # Always allow certain valuable paths
+    valuable_patterns = [
+        "/advisories", "/security", "/docs", "/documentation",
+        "/guide", "/tutorial", "/reference", "/api-reference",
+    ]
+    for pattern in valuable_patterns:
+        if pattern in full_url:
+            return True
+
+    # Reject bare domains with no path
+    # e.g., https://github.com, https://twitter.com
+    if not path:
+        # Exception: docs domains are usually crawlable at root
+        if _looks_like_docs_domain(url):
+            return True
+        return False
+
+    # Reject known non-crawlable patterns
+    non_crawlable_patterns = [
+        # Social media / non-docs sites
+        "twitter.com", "x.com", "facebook.com", "linkedin.com",
+        "youtube.com", "reddit.com", "discord.com", "slack.com",
+        # Login/auth pages
+        "/login", "/signin", "/signup", "/auth",
+        # API endpoints (not docs)
+        "/api/v", "/v1/", "/v2/", "/v3/",
+    ]
+
+    for pattern in non_crawlable_patterns:
+        if pattern in full_url:
+            # Exception: /api/ in docs context is fine
+            if "/api/" in full_url and ("docs" in full_url or "reference" in full_url):
+                continue
+            return False
+
+    return True
+
+
+def _normalize_github_url(url: str) -> str | None:
+    """Convert GitHub URLs to their most crawlable form.
+
+    Returns None if the URL should be skipped entirely.
+    """
+    parsed = urlparse(url)
+    if "github.com" not in parsed.netloc:
+        return url
+
+    path = parsed.path.strip("/")
+
+    # Skip bare github.com
+    if not path:
+        return None
+
+    # Always keep valuable paths
+    valuable_paths = ["advisories", "security", "wiki", "discussions"]
+    if any(v in path for v in valuable_paths):
+        return url
+
+    # Skip non-content pages
+    skip_patterns = [
+        "login", "signup", "settings", "notifications",
+        "marketplace", "explore", "trending", "collections",
+        "sponsors", "orgs", "enterprises",
+    ]
+    if any(path.startswith(p) for p in skip_patterns):
+        return None
+
+    parts = path.split("/")
+
+    # For repos, prefer the README or docs
+    if len(parts) >= 2:
+        owner, repo = parts[0], parts[1]
+        # Skip if repo part looks like a non-content page
+        if repo in skip_patterns:
+            return None
+        # If it's just owner/repo, that's fine (will show README)
+        # If it has /blob/ or /tree/, keep it
+        return url
+
+    # Single path segment (user profile or top-level page) - skip most
+    if len(parts) == 1:
+        # Keep advisories at root level
+        if parts[0] == "advisories":
+            return url
+        return None
+
+    return url
+
+
 def discover_sources(
     task: str,
     seed_url: str,
@@ -190,10 +285,14 @@ def discover_sources(
     except Exception as e:
         raise DiscoveryError(f"Failed to map seed URL {seed_url}: {e}") from e
 
-    # Search for supplementary materials (best-effort with warning)
+    # Search for supplementary materials (best-effort with stealth fallback)
     search_query = f"{task} documentation tutorial"
     try:
         search_result = search(search_query, limit=search_limit, scrape=True)
+        # If no results, try stealth
+        if not search_result.results:
+            print(f"Warning: Supplementary search returned no results, trying stealth...", file=sys.stderr)
+            search_result = search(search_query, limit=search_limit, scrape=True, stealth=True)
         for item in search_result.results:
             tier = _classify_tier(item.url)
             sources.append(Source(
@@ -205,8 +304,21 @@ def discover_sources(
                 content=item.markdown,
             ))
     except Exception as e:
-        # Log warning instead of silent pass
-        print(f"Warning: Supplementary search failed for '{search_query}': {e}", file=sys.stderr)
+        # Try stealth fallback before giving up
+        try:
+            search_result = search(search_query, limit=search_limit, scrape=True, stealth=True)
+            for item in search_result.results:
+                tier = _classify_tier(item.url)
+                sources.append(Source(
+                    url=item.url,
+                    title=item.title,
+                    source_type=SourceType.SEARCHED,
+                    priority=_tier_to_priority(tier, SourceType.SEARCHED),
+                    tier=tier,
+                    content=item.markdown,
+                ))
+        except Exception as stealth_e:
+            print(f"Warning: Supplementary search failed for '{search_query}': {e} (stealth also failed: {stealth_e})", file=sys.stderr)
 
     # Deduplicate and sort by priority (tier is reflected in priority)
     sources = _deduplicate_sources(sources)
@@ -251,11 +363,29 @@ def discover_sources_from_task(
         try:
             # Use scrape=False for discovery - we'll crawl these URLs later
             search_result = search(query, limit=search_limit, scrape=False)
+            # If no results, try stealth
+            if not search_result.results:
+                print(f"Warning: Seed search returned no results for '{query}', trying stealth...", file=sys.stderr)
+                search_result = search(query, limit=search_limit, scrape=False, stealth=True)
         except Exception as e:
-            print(f"Warning: Seed search failed for '{query}': {e}", file=sys.stderr)
-            continue
+            # Try stealth fallback
+            try:
+                search_result = search(query, limit=search_limit, scrape=False, stealth=True)
+            except Exception as stealth_e:
+                print(f"Warning: Seed search failed for '{query}': {e} (stealth also failed)", file=sys.stderr)
+                continue
         for item in search_result.results:
-            candidate_urls.append(item.url)
+            url = item.url
+            # Normalize GitHub URLs
+            if "github.com" in url:
+                url = _normalize_github_url(url)
+                if url is None:
+                    continue
+            # Skip non-crawlable URLs
+            if not _is_crawlable_url(url):
+                print(f"  Skipping non-crawlable URL: {item.url}", file=sys.stderr)
+                continue
+            candidate_urls.append(url)
 
     if not candidate_urls:
         raise DiscoveryError(
@@ -307,11 +437,131 @@ def discover_sources_from_task(
     return sources
 
 
+def _simplify_gap_query(query: str) -> str:
+    """Simplify verbose gap queries into shorter, more effective search terms.
+
+    Bad: "Stripe API subscription creation endpoint documentation including authentication and code examples"
+    Good: "Stripe API create subscription"
+    """
+    # Words that add noise to search queries
+    noise_words = {
+        "documentation", "docs", "official", "complete", "detailed", "comprehensive",
+        "including", "example", "examples", "code", "tutorial", "guide", "reference",
+        "endpoint", "endpoints", "authentication", "implementation", "usage", "using",
+        "information", "details", "about", "regarding", "related", "specific",
+        "how", "to", "the", "a", "an", "for", "with", "and", "or", "in", "on",
+    }
+
+    words = query.lower().split()
+    simplified = [w for w in words if w not in noise_words]
+
+    # If we stripped too much, keep first 5 words of original
+    if len(simplified) < 2:
+        simplified = words[:5]
+
+    # Cap at 6 words max
+    result = " ".join(simplified[:6])
+    return result if result else query
+
+
+def _extract_docs_domain(query: str) -> str | None:
+    """Try to extract a likely documentation domain from a gap query.
+
+    Examples:
+        "Stripe API create subscription" -> "https://docs.stripe.com/api"
+        "Firecrawl crawl endpoint" -> "https://docs.firecrawl.dev"
+    """
+    query_lower = query.lower()
+
+    # Known API/service -> docs URL mappings
+    docs_mappings = {
+        "stripe": "https://docs.stripe.com/api",
+        "firecrawl": "https://docs.firecrawl.dev",
+        "openai": "https://platform.openai.com/docs",
+        "anthropic": "https://docs.anthropic.com",
+        "github": "https://docs.github.com",
+        "github security": "https://github.com/advisories",
+        "github advisory": "https://github.com/advisories",
+        "security advisory": "https://github.com/advisories",
+        "aws": "https://docs.aws.amazon.com",
+        "google cloud": "https://cloud.google.com/docs",
+        "azure": "https://learn.microsoft.com/azure",
+        "vercel": "https://vercel.com/docs",
+        "next.js": "https://nextjs.org/docs",
+        "nextjs": "https://nextjs.org/docs",
+        "supabase": "https://supabase.com/docs",
+        "twilio": "https://www.twilio.com/docs",
+        "sendgrid": "https://docs.sendgrid.com",
+        "resend": "https://resend.com/docs",
+        "redis": "https://redis.io/docs",
+        "mongodb": "https://www.mongodb.com/docs",
+        "postgres": "https://www.postgresql.org/docs",
+        "cuda": "https://docs.nvidia.com/cuda",
+        "pytorch": "https://pytorch.org/docs",
+        "tensorflow": "https://www.tensorflow.org/api_docs",
+        "numpy": "https://numpy.org/doc",
+        "pandas": "https://pandas.pydata.org/docs",
+        "react": "https://react.dev/reference",
+        "vue": "https://vuejs.org/guide",
+        "svelte": "https://svelte.dev/docs",
+    }
+
+    for service, docs_url in docs_mappings.items():
+        if service in query_lower:
+            return docs_url
+
+    return None
+
+
 def search_for_gap(gap_query: str, stealth: bool = False) -> list[Source]:
-    """Search for specific missing information to fill a knowledge gap."""
+    """Search for specific missing information to fill a knowledge gap.
+
+    Uses simplified queries for better search results. Falls back to crawling
+    known docs URLs if search repeatedly fails.
+    """
+    # Simplify verbose queries
+    simplified_query = _simplify_gap_query(gap_query)
+    if simplified_query != gap_query.lower().strip():
+        print(f"  Simplified query: '{gap_query}' -> '{simplified_query}'", file=sys.stderr)
+
+    result = None
+
+    # First attempt with simplified query
     try:
-        result = search(gap_query, limit=5, scrape=True, stealth=stealth)
-        sources = []
+        result = search(simplified_query, limit=5, scrape=True, stealth=stealth)
+    except Exception as e:
+        print(f"Warning: Gap search failed for '{simplified_query}': {e}", file=sys.stderr)
+        result = None
+
+    # If no results, check if we can fall back to crawling a known docs domain
+    if result is None or len(result.results) == 0:
+        docs_url = _extract_docs_domain(gap_query)
+        if docs_url:
+            print(f"  Search returned no results, falling back to crawl: {docs_url}", file=sys.stderr)
+            try:
+                from .firecrawl_client import crawl_url
+                crawl_result = crawl_url(docs_url, limit=10, stealth=stealth)
+                sources = []
+                for page in crawl_result.pages:
+                    tier = _classify_tier(page.url)
+                    sources.append(Source(
+                        url=page.url,
+                        title=page.title,
+                        source_type=SourceType.SEARCHED,
+                        priority=_tier_to_priority(tier, SourceType.SEARCHED),
+                        tier=tier,
+                        content=page.markdown,
+                    ))
+                if sources:
+                    print(f"  Crawl fallback found {len(sources)} pages", file=sys.stderr)
+                    sources.sort(key=lambda s: s.priority)
+                    return sources
+            except Exception as crawl_e:
+                print(f"  Crawl fallback also failed: {crawl_e}", file=sys.stderr)
+
+    # Return whatever we got from search (may be empty)
+    sources = []
+    if result:
         for item in result.results:
             tier = _classify_tier(item.url)
             sources.append(Source(
@@ -322,8 +572,6 @@ def search_for_gap(gap_query: str, stealth: bool = False) -> list[Source]:
                 tier=tier,
                 content=item.markdown,
             ))
-        # Sort by tier priority so Tier 1 sources come first
-        sources.sort(key=lambda s: s.priority)
-        return sources
-    except Exception as e:
-        raise SearchError(f"Gap search failed for '{gap_query}': {e}") from e
+    # Sort by tier priority so Tier 1 sources come first
+    sources.sort(key=lambda s: s.priority)
+    return sources

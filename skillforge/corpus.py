@@ -8,9 +8,38 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .discovery import Source, SourceType, SourceTier
+from .discovery import Source, SourceType, SourceTier, _is_crawlable_url, _normalize_github_url
 from .firecrawl_client import crawl_url
 from .exceptions import CorpusBuildError, CorpusLoadError, CorpusUpdateError, FirecrawlCrawlError
+
+
+def _filter_crawlable_sources(sources: list[Source]) -> list[Source]:
+    """Filter out sources that can't be crawled."""
+    filtered = []
+    for source in sources:
+        url = source.url
+        # Normalize GitHub URLs
+        if "github.com" in url:
+            normalized = _normalize_github_url(url)
+            if normalized is None:
+                print(f"  Skipping non-crawlable GitHub URL: {url}", file=sys.stderr)
+                continue
+            # Create a new source with normalized URL if changed
+            if normalized != url:
+                source = Source(
+                    url=normalized,
+                    title=source.title,
+                    source_type=source.source_type,
+                    priority=source.priority,
+                    tier=source.tier,
+                    content=source.content,
+                )
+        # Check if URL is crawlable
+        if not _is_crawlable_url(source.url):
+            print(f"  Skipping non-crawlable URL: {source.url}", file=sys.stderr)
+            continue
+        filtered.append(source)
+    return filtered
 
 
 @dataclass
@@ -89,19 +118,88 @@ def _get_base_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _crawl_domain(
+    base_url: str,
+    include_paths: list[str] | None,
+    limit: int,
+    stealth: bool,
+) -> tuple[list, list[str]]:
+    """Crawl a domain with automatic stealth fallback on anti-bot detection."""
+    from .firecrawl_client import crawl_url
+
+    pages = []
+    errors = []
+
+    try:
+        crawl_result = crawl_url(
+            base_url,
+            limit=limit,
+            include_paths=include_paths,
+            stealth=stealth,
+        )
+        pages = crawl_result.pages
+
+        # Heuristic: if we got very few pages and stealth wasn't used, retry with stealth
+        # This catches anti-bot protection that returns partial results
+        if len(pages) <= 1 and not stealth and limit > 5:
+            print(f"Warning: Only {len(pages)} page(s) crawled from {base_url}, retrying with stealth...", file=sys.stderr)
+            try:
+                stealth_result = crawl_url(
+                    base_url,
+                    limit=limit,
+                    include_paths=include_paths,
+                    stealth=True,
+                )
+                if len(stealth_result.pages) > len(pages):
+                    print(f"  Stealth mode recovered {len(stealth_result.pages)} pages", file=sys.stderr)
+                    pages = stealth_result.pages
+            except FirecrawlCrawlError as stealth_e:
+                print(f"  Stealth retry also failed: {stealth_e}", file=sys.stderr)
+
+    except FirecrawlCrawlError as e:
+        # If initial crawl failed completely and stealth wasn't used, try stealth
+        if not stealth:
+            print(f"Warning: Crawl failed for {base_url}, retrying with stealth...", file=sys.stderr)
+            try:
+                stealth_result = crawl_url(
+                    base_url,
+                    limit=limit,
+                    include_paths=include_paths,
+                    stealth=True,
+                )
+                pages = stealth_result.pages
+                print(f"  Stealth mode succeeded with {len(pages)} pages", file=sys.stderr)
+            except FirecrawlCrawlError as stealth_e:
+                errors.append(f"{base_url}: {stealth_e} (stealth also failed)")
+                print(f"  Stealth retry also failed: {stealth_e}", file=sys.stderr)
+        else:
+            errors.append(f"{base_url}: {e}")
+            print(f"Warning: Failed to crawl {base_url}: {e}", file=sys.stderr)
+
+    return pages, errors
+
+
 def build_corpus(task: str, sources: list[Source], limit: int = 50, stealth: bool = False) -> Path:
     """
     Build a corpus from discovered sources.
 
-    1. Group SEED and MAPPED sources by domain
-    2. Crawl each domain with include_paths from mapped URLs
-    3. Add any pre-fetched search results
-    4. Save pages as markdown with frontmatter
-    5. Create manifest.json
+    1. Filter out non-crawlable URLs
+    2. Group SEED and MAPPED sources by domain
+    3. Crawl each domain with include_paths from mapped URLs
+    4. Add any pre-fetched search results
+    5. Save pages as markdown with frontmatter
+    6. Create manifest.json
 
     Args:
         stealth: Use Firecrawl stealth proxies for sites with anti-bot protection.
+                 If False, will automatically retry with stealth on anti-bot detection.
     """
+    # Filter out non-crawlable URLs first
+    sources = _filter_crawlable_sources(sources)
+
+    if not sources:
+        raise CorpusBuildError("No crawlable sources found after filtering")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     corpus_name = f"corpus_{_slugify(task)}_{timestamp}"
     corpus_path = Path.cwd() / "corpus" / corpus_name
@@ -149,35 +247,34 @@ def build_corpus(task: str, sources: list[Source], limit: int = 50, stealth: boo
         # Deduplicate include_paths
         include_paths = list(set(include_paths)) if include_paths else None
 
-        try:
-            crawl_result = crawl_url(
-                base_url,
-                limit=remaining_limit,
-                include_paths=include_paths,
-                stealth=stealth,
+        # Crawl with automatic stealth fallback
+        crawled_pages, errors = _crawl_domain(
+            base_url,
+            include_paths,
+            remaining_limit,
+            stealth,
+        )
+        crawl_errors.extend(errors)
+
+        for page in crawled_pages:
+            if page.url in seen_urls:
+                continue
+            seen_urls.add(page.url)
+            info = _write_page(
+                corpus_path,
+                url=page.url,
+                title=page.title,
+                markdown=page.markdown,
+                index=page_index,
+                source_type="crawled",
+                priority=domain_tier + 1,  # Priority based on domain tier
+                tier=domain_tier,
             )
-            for page in crawl_result.pages:
-                if page.url in seen_urls:
-                    continue
-                seen_urls.add(page.url)
-                info = _write_page(
-                    corpus_path,
-                    url=page.url,
-                    title=page.title,
-                    markdown=page.markdown,
-                    index=page_index,
-                    source_type="crawled",
-                    priority=domain_tier + 1,  # Priority based on domain tier
-                    tier=domain_tier,
-                )
-                pages_info.append(info)
-                page_index += 1
-                remaining_limit -= 1
-                if remaining_limit <= 0:
-                    break
-        except FirecrawlCrawlError as e:
-            crawl_errors.append(f"{base_url}: {e}")
-            print(f"Warning: Failed to crawl {base_url}: {e}", file=sys.stderr)
+            pages_info.append(info)
+            page_index += 1
+            remaining_limit -= 1
+            if remaining_limit <= 0:
+                break
 
     # If all crawls failed, raise error
     if not pages_info and crawl_errors:

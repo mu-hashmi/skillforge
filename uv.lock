@@ -838,6 +838,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "click" },
     { name = "firecrawl-py" },
+    { name = "python-dotenv" },
     { name = "rich" },
 ]
 
@@ -846,7 +847,8 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.77.0" },
     { name = "click", specifier = ">=8.3.1" },
     { name = "firecrawl-py", specifier = ">=4.14.0" },
-    { name = "rich", specifier = ">=14.3.1" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "rich", specifier = ">=14.0.0" },
 ]
 
 [[package]]
