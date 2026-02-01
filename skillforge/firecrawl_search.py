@@ -46,6 +46,10 @@ def _write_cache(cache_path: Path, query: str, results) -> None:
 
 
 def _print_summary(cache_path: Path, query: str, results) -> None:
+    if not results:
+        print(f"No results found for: {query}")
+        print("Try a different query or use /deep-dive with a specific docs URL.")
+        return
     print("Top findings:")
     for idx, item in enumerate(results[:3], start=1):
         title = item.title or item.url

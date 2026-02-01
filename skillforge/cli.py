@@ -1,5 +1,6 @@
 """CLI entry point."""
 
+import sys
 from pathlib import Path
 
 import click
@@ -8,7 +9,21 @@ from .claude_runner import ensure_core_skills, ensure_verify_script, write_task_
 from .exceptions import SkillForgeError, ClaudeRunnerError, FirecrawlSearchError, GenerationError
 
 
-@click.group()
+class DefaultGroup(click.Group):
+    """A click Group that treats unknown commands as arguments to the default command."""
+
+    def __init__(self, *args, default_cmd: str = "run", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.default_cmd = default_cmd
+
+    def parse_args(self, ctx, args):
+        # If first arg doesn't look like a known command, treat it as 'run <task>'
+        if args and args[0] not in self.commands and not args[0].startswith("-"):
+            args = [self.default_cmd] + list(args)
+        return super().parse_args(ctx, args)
+
+
+@click.group(cls=DefaultGroup)
 def main() -> None:
     """SkillForge - Launch Claude Code with Firecrawl-powered retrieval."""
     pass

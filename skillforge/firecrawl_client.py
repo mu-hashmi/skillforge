@@ -212,8 +212,7 @@ def search(
                         markdown=item.get("markdown"),
                     ))
 
-        if not items:
-            raise FirecrawlSearchError(f"Search returned no results for '{query}'")
+        # Empty results is valid, not an error
 
         return SearchResult(results=items, query=query)
     except FirecrawlSearchError:
