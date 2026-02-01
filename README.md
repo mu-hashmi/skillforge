@@ -9,7 +9,7 @@ SkillForge launches Claude Code as the coder, installs core skills into the targ
 3. Run in your target repo:
 
 ```bash
-skillforge "Build a CUDA kernel for diffusers. Verify with: ./scripts/verify.sh -- python -m pytest -q"
+skillforge run "Build a CUDA kernel for diffusers. Verify with: ./scripts/verify.sh -- python -m pytest -q"
 ```
 
 ## What it does
@@ -37,7 +37,7 @@ Claude Code follows this contract:
 Firecrawl-powered search for error-driven debugging.
 
 ```bash
-python -m skillforge.firecrawl_search "<query or stderr>"
+skillforge search "<query or stderr>"
 ```
 
 Writes to `.skillforge/cache/<timestamp>_search.md`.
@@ -47,7 +47,7 @@ Writes to `.skillforge/cache/<timestamp>_search.md`.
 Crawl an entire documentation site when you need comprehensive knowledge.
 
 ```bash
-python -m skillforge.firecrawl_crawl "https://docs.example.com" --limit 50
+skillforge crawl "https://docs.example.com" --limit 50
 ```
 
 Writes to `.skillforge/knowledge/<domain>/`.
@@ -57,7 +57,7 @@ Writes to `.skillforge/knowledge/<domain>/`.
 Persist the workflow as a reusable skill with embedded knowledge.
 
 ```bash
-python -m skillforge.generate_skill --name "<skill-name>" --task-file .skillforge/TASK.md --out .claude/skills/<skill-name>
+skillforge save-skill "<skill-name>"
 ```
 
 Collects cached searches and crawled docs into `references/knowledge.md`.

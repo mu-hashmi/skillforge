@@ -24,7 +24,12 @@ This is a hackathon project for **Hack the Stackathon** - a builder-focused hack
 uv sync
 
 # Run the CLI
-uv run skillforge "task description"
+uv run skillforge run "task description"
+
+# Subcommands (used by skills)
+uv run skillforge search "query"
+uv run skillforge crawl "https://docs.example.com"
+uv run skillforge save-skill "skill-name"
 ```
 
 ## Environment Variables

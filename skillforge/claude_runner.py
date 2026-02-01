@@ -22,7 +22,7 @@ allowed-tools:
 Use when you hit an error and need docs. Paste the error text as the argument.
 
 Run:
-!python -m skillforge.firecrawl_search "$ARGUMENTS"
+!skillforge search $ARGUMENTS
 
 The command writes full results to .skillforge/cache/<timestamp>_search.md and prints:
 - Top findings
@@ -43,7 +43,7 @@ allowed-tools:
 Provide a short, hyphenated skill name in $ARGUMENTS (example: cuda-kernel-fixups).
 
 Run:
-!python -m skillforge.generate_skill --name "$ARGUMENTS" --task-file .skillforge/TASK.md --out ".claude/skills/$ARGUMENTS"
+!skillforge save-skill $ARGUMENTS
 
 This creates .claude/skills/<skill-name>/SKILL.md and any supporting files.
 Keep SKILL.md under ~500 lines; put large references into separate files.
@@ -62,7 +62,7 @@ allowed-tools:
 Use when you need thorough understanding of a library, not just error fixes.
 
 Run:
-!python -m skillforge.firecrawl_crawl "$ARGUMENTS"
+!skillforge crawl $ARGUMENTS
 
 Arguments: A documentation URL (e.g., https://docs.fastht.ml)
 
@@ -74,7 +74,7 @@ This will:
 The crawled docs persist across sessions and are automatically included in future /save-skill outputs.
 
 Use --limit N to crawl more or fewer pages:
-!python -m skillforge.firecrawl_crawl "$ARGUMENTS" --limit 100
+!skillforge crawl $ARGUMENTS --limit 100
 """
 
 
